@@ -1,0 +1,19 @@
+{
+  "name": "Library Picker",
+  "short_name": "Library Picker",
+  "description": "図書館倉庫ピッキングアクション",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#070b18",
+  "theme_color": "#070b18",
+  "orientation": "landscape",
+  "icons": [
+    {
+      "src": "/vite.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
