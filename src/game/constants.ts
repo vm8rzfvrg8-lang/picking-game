@@ -49,6 +49,10 @@ export const GRID_W = 18;
 export const GRID_H = 14;
 export const TILE = 36;
 
+export const MIN_CPU_COUNT = 1;
+export const MAX_CPU_COUNT = 7;
+export const DEFAULT_CPU_COUNT = 7;
+
 export const PICK_COUNT = 5;
 export const PICK_DURATION_MS = 2500; // 2.5-second pick countdown
 export const RIVAL_STEP_MS = 580; // rival moves one cell every this many ms
@@ -66,6 +70,9 @@ export const WRONG_WAY_PATH_PENALTY = 12;
 export const WRONG_WAY_PATH_PENALTY_SHORT = 6;
 export const RIVAL_PICK_DURATION_MS = 3500; // rival picks slightly slower
 
+/** Per-frame cap for hot-path loops (AI, collision, BFS) to avoid runaway iteration. */
+export const MAX_LOOP_ITERATIONS_PER_FRAME = 10;
+
 import type { Difficulty } from './difficulty';
 import type { SkillState, SkillType } from './skills';
 import { createInitialSkills } from './skills';
@@ -76,10 +83,23 @@ export { SkillType } from './skills';
 
 export type Phase = 'start' | 'tutorial' | 'playing' | 'won' | 'lost';
 
+/** CPU body colors (index 0–6). */
+export const RIVAL_PALETTE = [
+  { body: '#ff8c42', light: '#ffb070', dark: '#a85a20', outline: '#5a2e0a', stun: '#7a5a3a' },
+  { body: '#ff5a8a', light: '#ff8cb0', dark: '#a83058', outline: '#5a1830', stun: '#7a4a58' },
+  { body: '#5aff8a', light: '#8affb0', dark: '#20a858', outline: '#0a5a30', stun: '#4a7a58' },
+  { body: '#8a5aff', light: '#b08aff', dark: '#5820a8', outline: '#300a5a', stun: '#5a4a7a' },
+  { body: '#ffdd5a', light: '#ffee8a', dark: '#a89820', outline: '#5a500a', stun: '#7a755a' },
+  { body: '#5ad4ff', light: '#8ae5ff', dark: '#2088a8', outline: '#0a485a', stun: '#4a687a' },
+  { body: '#ff7a5a', light: '#ffa08a', dark: '#a84820', outline: '#5a280a', stun: '#7a584a' },
+] as const;
+
 export interface GameState {
   grid: Tile[][];
   player: PlayerEntity;
-  rival: RivalEntity;
+  rivals: RivalEntity[];
+  /** Selected CPU count (1–7) for the current session. */
+  cpuCount: number;
   targets: PickTarget[]; // player's ordered pick list
   currentTarget: number; // index into targets[] of the next to pick (0..PICK_COUNT)
   pickProgress: number; // 0..1 gauge fill while picking
@@ -112,8 +132,18 @@ export interface GameState {
   tutorialLockedSkill: SkillType | null;
   selectedSkill: SkillType;
   skills: SkillState;
-  /** CPU skill gauge/effects (for ゴリ押し etc.). */
-  rivalSkills: SkillState;
+  /** Per-CPU skill gauge/effects (for ゴリ押し etc.). */
+  rivalSkills: SkillState[];
+}
+
+export function clampCpuCount(count: number): number {
+  return Math.max(MIN_CPU_COUNT, Math.min(MAX_CPU_COUNT, Math.round(count)));
+}
+
+export function setPrimaryRival(state: GameState, rival: RivalEntity): GameState {
+  const rivals = [...state.rivals];
+  rivals[0] = rival;
+  return { ...state, rivals };
 }
 
 export const COLORS = {

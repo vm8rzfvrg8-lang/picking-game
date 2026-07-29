@@ -1,6 +1,7 @@
 import type { GameState } from '../engine';
 import { SkillType, fillSkillGauge } from '../skills';
 import type { Direction } from '../constants';
+import { setPrimaryRival } from '../constants';
 import { isShelf, isWalkable, MAIN_AISLE_Y_BOTTOM, MAIN_AISLE_Y_TOP } from '../levelgen';
 import {
   TUTORIAL_PLAYER_SPAWN,
@@ -62,7 +63,7 @@ function configureStep5SuperSpeed(state: GameState): GameState {
   }
 
   const player = { ...state.player };
-  const rival = { ...state.rival };
+  const rival = { ...state.rivals[0] };
   applyUnifiedSpawn(player, rival);
 
   const targets = state.targets.map((t, i) => {
@@ -72,29 +73,31 @@ function configureStep5SuperSpeed(state: GameState): GameState {
     return { ...t, done: true };
   });
 
-  return {
-    ...state,
-    player,
+  return setPrimaryRival(
+    {
+      ...state,
+      player,
+      targets,
+      currentTarget: 0,
+      isPicking: false,
+      pickProgress: 0,
+      selectedSkill: SkillType.SuperSpeed,
+      skills: fillSkillGauge(state.skills),
+      tutorialSubStep: 1,
+      tutorialReachCell: null,
+      tutorialRivalBlock: false,
+      tutorialRivalForcePick: false,
+      tutorialLockedSkill: SkillType.SuperSpeed,
+      tutorialRivalActive: false,
+      tutorialRivalWrongWay: false,
+    },
     rival,
-    targets,
-    currentTarget: 0,
-    isPicking: false,
-    pickProgress: 0,
-    selectedSkill: SkillType.SuperSpeed,
-    skills: fillSkillGauge(state.skills),
-    tutorialSubStep: 1,
-    tutorialReachCell: null,
-    tutorialRivalBlock: false,
-    tutorialRivalForcePick: false,
-    tutorialLockedSkill: SkillType.SuperSpeed,
-    tutorialRivalActive: false,
-    tutorialRivalWrongWay: false,
-  };
+  );
 }
 
 function configureStep5PushThrough(state: GameState): GameState {
   const player = { ...state.player };
-  const rival = { ...state.rival };
+  const rival = { ...state.rivals[0] };
 
   player.x = TUTORIAL_PLAYER_SPAWN.x;
   player.y = TUTORIAL_PLAYER_SPAWN.y;
@@ -110,27 +113,29 @@ function configureStep5PushThrough(state: GameState): GameState {
   rival.pickProgress = 0;
   rival.jamStun = false;
 
-  return {
-    ...state,
-    player,
+  return setPrimaryRival(
+    {
+      ...state,
+      player,
+      isPicking: false,
+      pickProgress: 0,
+      selectedSkill: SkillType.PushThrough,
+      skills: fillSkillGauge(state.skills),
+      tutorialSubStep: 2,
+      tutorialReachCell: { ...TUTORIAL_STEP5_REACH },
+      tutorialRivalBlock: true,
+      tutorialRivalForcePick: false,
+      tutorialLockedSkill: SkillType.PushThrough,
+      tutorialRivalActive: true,
+      tutorialRivalWrongWay: false,
+    },
     rival,
-    isPicking: false,
-    pickProgress: 0,
-    selectedSkill: SkillType.PushThrough,
-    skills: fillSkillGauge(state.skills),
-    tutorialSubStep: 2,
-    tutorialReachCell: { ...TUTORIAL_STEP5_REACH },
-    tutorialRivalBlock: true,
-    tutorialRivalForcePick: false,
-    tutorialLockedSkill: SkillType.PushThrough,
-    tutorialRivalActive: true,
-    tutorialRivalWrongWay: false,
-  };
+  );
 }
 
 function configureStep5JamSignal(state: GameState): GameState {
   const player = { ...state.player };
-  const rival = { ...state.rival };
+  const rival = { ...state.rivals[0] };
 
   player.x = 6;
   player.y = MAIN_AISLE_Y_TOP;
@@ -159,25 +164,27 @@ function configureStep5JamSignal(state: GameState): GameState {
     return { ...t, done: true };
   });
 
-  return {
-    ...state,
-    player,
-    rival: { ...rival, targets: rivalTargets, currentTarget: 0 },
-    isPicking: false,
-    pickProgress: 0,
-    selectedSkill: SkillType.JamSignal,
-    skills: fillSkillGauge(state.skills),
-    tutorialSubStep: 3,
-    tutorialReachCell: null,
-    tutorialRivalBlock: false,
-    tutorialRivalForcePick: true,
-    tutorialLockedSkill: SkillType.JamSignal,
-    tutorialRivalActive: false,
-    tutorialRivalWrongWay: false,
-  };
+  return setPrimaryRival(
+    {
+      ...state,
+      player,
+      isPicking: false,
+      pickProgress: 0,
+      selectedSkill: SkillType.JamSignal,
+      skills: fillSkillGauge(state.skills),
+      tutorialSubStep: 3,
+      tutorialReachCell: null,
+      tutorialRivalBlock: false,
+      tutorialRivalForcePick: true,
+      tutorialLockedSkill: SkillType.JamSignal,
+      tutorialRivalActive: false,
+      tutorialRivalWrongWay: false,
+    },
+    { ...rival, targets: rivalTargets, currentTarget: 0 },
+  );
 }
 
-function applyUnifiedSpawn(player: GameState['player'], rival: GameState['rival']) {
+function applyUnifiedSpawn(player: GameState['player'], rival: GameState['rivals'][number]) {
   player.x = TUTORIAL_PLAYER_SPAWN.x;
   player.y = TUTORIAL_PLAYER_SPAWN.y;
   player.facing = 'right';
@@ -203,7 +210,7 @@ export function applyTutorialStepLayout(
   }
 
   const player = { ...state.player };
-  const rival = { ...state.rival };
+  const rival = { ...state.rivals[0] };
 
   player.stun = 0;
   player.lastMoveDir = null;
@@ -233,18 +240,20 @@ export function applyTutorialStepLayout(
     rival.y = TUTORIAL_RIVAL_SPAWN.y;
   }
 
-  let next: GameState = {
-    ...resetTutorialSkillFields(state),
-    player,
+  let next: GameState = setPrimaryRival(
+    {
+      ...resetTutorialSkillFields(state),
+      player,
+      isPicking: false,
+      pickProgress: 0,
+      collisionFx: 0,
+      collisionPos: null,
+      tutorialRivalActive: step === 3 || step === 4,
+      tutorialRivalWrongWay: step === 3,
+      version: state.version + 1,
+    },
     rival,
-    isPicking: false,
-    pickProgress: 0,
-    collisionFx: 0,
-    collisionPos: null,
-    tutorialRivalActive: step === 3 || step === 4,
-    tutorialRivalWrongWay: step === 3,
-    version: state.version + 1,
-  };
+  );
 
   if (step === 1) {
     next = configureStep1PickTarget(next);

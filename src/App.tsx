@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { GameState, GRID_H, GRID_W, TILE } from './game/constants';
+import { GameState, GRID_H, GRID_W, TILE, DEFAULT_CPU_COUNT } from './game/constants';
 import { Difficulty } from './game/difficulty';
 import { Direction, Input, isPickInput, newGame, startPlaying, enterTutorial, returnToStart, step } from './game/engine';
 import {
@@ -51,12 +51,26 @@ import {
 
 const PLAYER_COOLDOWN_MS = 130;
 
+function syncRivalVisuals(
+  refs: React.MutableRefObject<Record<number, { x: number; y: number }>>,
+  game: GameState,
+) {
+  for (const rival of game.rivals) {
+    if (!refs.current[rival.id]) {
+      refs.current[rival.id] = { x: rival.x, y: rival.y };
+    }
+  }
+}
+
 export default function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const kbRef = useKeyboardInput();
 
-  const [game, setGame] = useState<GameState>(() => newGame(undefined, 'normal', SkillType.SuperSpeed));
+  const [game, setGame] = useState<GameState>(() =>
+    newGame(undefined, 'normal', SkillType.SuperSpeed, DEFAULT_CPU_COUNT),
+  );
   const [difficulty, setDifficulty] = useState<Difficulty>('normal');
+  const [cpuCount, setCpuCount] = useState(DEFAULT_CPU_COUNT);
   const [selectedSkill, setSelectedSkill] = useState<SkillType>(SkillType.SuperSpeed);
   const gameRef = useRef(game);
   gameRef.current = game;
@@ -67,7 +81,7 @@ export default function App() {
 
   // Visual interpolated positions (grid units)
   const playerVisualRef = useRef({ x: game.player.x, y: game.player.y });
-  const rivalVisualRef = useRef({ x: game.rival.x, y: game.rival.y });
+  const rivalVisualRefs = useRef<Record<number, { x: number; y: number }>>({});
 
   // Player move cooldown accumulator
   const moveCdRef = useRef(0);
@@ -85,7 +99,8 @@ export default function App() {
     const g = returnToStart(gameRef.current);
     gameRef.current = g;
     playerVisualRef.current = { x: g.player.x, y: g.player.y };
-    rivalVisualRef.current = { x: g.rival.x, y: g.rival.y };
+    rivalVisualRefs.current = {};
+    syncRivalVisuals(rivalVisualRefs, g);
     moveCdRef.current = 0;
     touchDirRef.current = null;
     tutorialStatsRef.current = createTutorialStats();
@@ -108,7 +123,8 @@ export default function App() {
         const g = applyTutorialStepLayout(gameRef.current, cb.step, cb.subStep);
         gameRef.current = g;
         playerVisualRef.current = { x: g.player.x, y: g.player.y };
-        rivalVisualRef.current = { x: g.rival.x, y: g.rival.y };
+        rivalVisualRefs.current = {};
+        syncRivalVisuals(rivalVisualRefs, g);
         setGame(g);
         continue;
       }
@@ -121,28 +137,30 @@ export default function App() {
       const g = applyTutorialStepLayout(gameRef.current, cb.step);
       gameRef.current = g;
       playerVisualRef.current = { x: g.player.x, y: g.player.y };
-      rivalVisualRef.current = { x: g.rival.x, y: g.rival.y };
+      rivalVisualRefs.current = {};
+      syncRivalVisuals(rivalVisualRefs, g);
       setGame(g);
     }
   }, []);
 
   const resetGame = useCallback(() => {
-    const g = newGame(undefined, difficulty, selectedSkill);
+    const g = newGame(undefined, difficulty, selectedSkill, cpuCount);
     setGame(g);
     gameRef.current = g;
     playerVisualRef.current = { x: g.player.x, y: g.player.y };
-    rivalVisualRef.current = { x: g.rival.x, y: g.rival.y };
+    rivalVisualRefs.current = {};
+    syncRivalVisuals(rivalVisualRefs, g);
     moveCdRef.current = 0;
     touchDirRef.current = null;
     resetVfx(vfxRef.current);
     goalFxDoneRef.current = false;
-  }, [difficulty, selectedSkill]);
+  }, [difficulty, selectedSkill, cpuCount]);
 
   const beginTutorial = useCallback(() => {
     unlockAudio();
     tutorialStatsRef.current = createTutorialStats();
     const startCallbacks = startTutorial();
-    const g = enterTutorial(newGame(undefined, difficulty, selectedSkill));
+    const g = enterTutorial(newGame(undefined, difficulty, selectedSkill, 1));
     gameRef.current = g;
     moveCdRef.current = 0;
     resetVfx(vfxRef.current);
@@ -159,15 +177,16 @@ export default function App() {
   const beginGame = useCallback(() => {
     unlockAudio();
     sfx.start();
-    const g = startPlaying(newGame(undefined, difficulty, selectedSkill));
+    const g = startPlaying(newGame(undefined, difficulty, selectedSkill, cpuCount));
     gameRef.current = g;
     playerVisualRef.current = { x: g.player.x, y: g.player.y };
-    rivalVisualRef.current = { x: g.rival.x, y: g.rival.y };
+    rivalVisualRefs.current = {};
+    syncRivalVisuals(rivalVisualRefs, g);
     moveCdRef.current = 0;
     resetVfx(vfxRef.current);
     goalFxDoneRef.current = false;
     setGame(g);
-  }, [difficulty, selectedSkill]);
+  }, [difficulty, selectedSkill, cpuCount]);
 
   const toggleMute = useCallback(() => {
     setMutedState((m) => {
@@ -199,9 +218,12 @@ export default function App() {
     const playerLerp = isSuperSpeedActive(g.skills) ? 24 : 16;
     pv.x = lerp(pv.x, g.player.x, Math.min(1, playerLerp * dt));
     pv.y = lerp(pv.y, g.player.y, Math.min(1, playerLerp * dt));
-    const rv = rivalVisualRef.current;
-    rv.x = lerp(rv.x, g.rival.x, Math.min(1, 12 * dt));
-    rv.y = lerp(rv.y, g.rival.y, Math.min(1, 12 * dt));
+    for (const rival of g.rivals) {
+      const rv = rivalVisualRefs.current[rival.id] ?? { x: rival.x, y: rival.y };
+      rv.x = lerp(rv.x, rival.x, Math.min(1, 12 * dt));
+      rv.y = lerp(rv.y, rival.y, Math.min(1, 12 * dt));
+      rivalVisualRefs.current[rival.id] = rv;
+    }
 
     if (g.phase === 'playing' || (isTutorial && tutorialSimActive)) {
       if (tutorialInputActive) {
@@ -239,7 +261,9 @@ export default function App() {
           if (t) triggerPickComplete(vfx, t.x, t.y, 'player', ev.index);
         } else if (ev.type === 'pickDone' && ev.who === 'rival') {
           sfx.pickup();
-          const t = res.state.rival.targets[ev.index];
+          const rival =
+            res.state.rivals.find((r) => r.id === ev.entityId) ?? res.state.rivals[0];
+          const t = rival?.targets[ev.index];
           if (t) triggerPickComplete(vfx, t.x, t.y, 'rival', ev.index);
         } else if (ev.type === 'collision') {
           sfx.collision();
@@ -273,10 +297,9 @@ export default function App() {
             x: res.state.player.x,
             y: res.state.player.y,
           };
-          rivalVisualRef.current = {
-            x: res.state.rival.x,
-            y: res.state.rival.y,
-          };
+          for (const rival of res.state.rivals) {
+            rivalVisualRefs.current[rival.id] = { x: rival.x, y: rival.y };
+          }
         }
       }
 
@@ -325,7 +348,7 @@ export default function App() {
             ctx,
             gameRef.current,
             playerVisualRef.current,
-            rivalVisualRef.current,
+            rivalVisualRefs.current,
             blinkRef.current,
           );
           drawTrailMarks(ctx, vfxRef.current);
@@ -453,8 +476,10 @@ export default function App() {
         {game.phase === 'start' && (
           <StartScreen
             difficulty={difficulty}
+            cpuCount={cpuCount}
             selectedSkill={selectedSkill}
             onDifficultyChange={setDifficulty}
+            onCpuCountChange={setCpuCount}
             onSkillChange={setSelectedSkill}
             onStart={beginGame}
             onTutorial={beginTutorial}
@@ -470,27 +495,42 @@ function drawSmoothEntities(
   ctx: CanvasRenderingContext2D,
   state: GameState,
   playerVisual: { x: number; y: number },
-  rivalVisual: { x: number; y: number },
+  rivalVisuals: Record<number, { x: number; y: number }>,
   blink: number,
 ) {
   eraseFloorCell(ctx, state, state.player.x, state.player.y);
   eraseFloorCell(ctx, state, Math.round(playerVisual.x), Math.round(playerVisual.y));
-  eraseFloorCell(ctx, state, state.rival.x, state.rival.y);
-  eraseFloorCell(ctx, state, Math.round(rivalVisual.x), Math.round(rivalVisual.y));
 
-  const rMoving =
-    Math.abs(rivalVisual.x - state.rival.x) > 0.04 || Math.abs(rivalVisual.y - state.rival.y) > 0.04;
+  for (const rival of state.rivals) {
+    const rivalVisual = rivalVisuals[rival.id] ?? { x: rival.x, y: rival.y };
+    eraseFloorCell(ctx, state, rival.x, rival.y);
+    eraseFloorCell(ctx, state, Math.round(rivalVisual.x), Math.round(rivalVisual.y));
+
+    const rMoving =
+      Math.abs(rivalVisual.x - rival.x) > 0.04 || Math.abs(rivalVisual.y - rival.y) > 0.04;
+
+    drawCharacterAt(
+      ctx,
+      rivalVisual.x,
+      rivalVisual.y,
+      rival.facing,
+      blink,
+      rival.stun > 0,
+      'rival',
+      {
+        moving: rMoving,
+        squash: rMoving ? 0.92 : 1,
+        jamStun: rival.jamStun && rival.stun > 0,
+        rivalIndex: rival.id,
+      },
+    );
+    if (rival.isPicking) {
+      drawPickGaugeAt(ctx, rivalVisual.x, rivalVisual.y, rival.pickProgress, 'rival');
+    }
+  }
+
   const pMoving =
     Math.abs(playerVisual.x - state.player.x) > 0.04 || Math.abs(playerVisual.y - state.player.y) > 0.04;
-
-  drawCharacterAt(ctx, rivalVisual.x, rivalVisual.y, state.rival.facing, blink, state.rival.stun > 0, 'rival', {
-    moving: rMoving,
-    squash: rMoving ? 0.92 : 1,
-    jamStun: state.rival.jamStun && state.rival.stun > 0,
-  });
-  if (state.rival.isPicking) {
-    drawPickGaugeAt(ctx, rivalVisual.x, rivalVisual.y, state.rival.pickProgress, 'rival');
-  }
 
   drawCharacterAt(ctx, playerVisual.x, playerVisual.y, state.player.facing, blink, state.player.stun > 0, 'player', {
     moving: pMoving,

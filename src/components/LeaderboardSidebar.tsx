@@ -1,6 +1,6 @@
 import { Cpu, User } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import { GameState } from '../game/constants';
+import { GameState, RIVAL_PALETTE } from '../game/constants';
 import { getDifficultyConfig } from '../game/difficulty';
 import { isGoalCell } from '../game/levelgen';
 
@@ -37,13 +37,9 @@ function buildEntries(game: GameState): LeaderboardEntry[] {
   const playerAtGoal =
     playerAllPicked && isGoalCell(game.grid, game.player.x, game.player.y);
 
-  const rivalTotal = game.rival.targets.length;
-  const rivalPicked = game.rival.currentTarget;
-  const rivalAllPicked = rivalPicked >= rivalTotal;
-  const rivalAtGoal = rivalAllPicked && isGoalCell(game.grid, game.rival.x, game.rival.y);
   const cpuLabel = getDifficultyConfig(game.difficulty).shortLabel;
 
-  return [
+  const entries: LeaderboardEntry[] = [
     {
       id: 'player',
       name: 'あなた',
@@ -60,24 +56,34 @@ function buildEntries(game: GameState): LeaderboardEntry[] {
         playerAllPicked,
       ),
     },
-    {
-      id: `rival-${game.rival.id}`,
-      name: 'CPU',
-      isPlayer: false,
-      picked: rivalPicked,
-      total: rivalTotal,
-      accent: '#ff8c42',
-      accentMuted: 'rgba(255,140,66,0.2)',
-      Icon: Cpu,
-      badge: cpuLabel,
-      goalStatus: getGoalStatus(
-        rivalPicked,
-        rivalTotal,
-        rivalAtGoal,
-        rivalAllPicked || game.rival.reachedGoal,
-      ),
-    },
+    ...game.rivals.map((rival) => {
+      const rivalTotal = rival.targets.length;
+      const rivalPicked = rival.currentTarget;
+      const rivalAllPicked = rivalPicked >= rivalTotal;
+      const rivalAtGoal =
+        rivalAllPicked && isGoalCell(game.grid, rival.x, rival.y);
+      const palette = RIVAL_PALETTE[rival.id % RIVAL_PALETTE.length];
+      return {
+        id: `rival-${rival.id}`,
+        name: game.rivals.length > 1 ? `CPU${rival.id + 1}` : 'CPU',
+        isPlayer: false,
+        picked: rivalPicked,
+        total: rivalTotal,
+        accent: palette.body,
+        accentMuted: `${palette.body}33`,
+        Icon: Cpu,
+        badge: cpuLabel,
+        goalStatus: getGoalStatus(
+          rivalPicked,
+          rivalTotal,
+          rivalAtGoal,
+          rivalAllPicked || rival.reachedGoal,
+        ),
+      };
+    }),
   ];
+
+  return entries;
 }
 
 function rankScore(entry: LeaderboardEntry): number {

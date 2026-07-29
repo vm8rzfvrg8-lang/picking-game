@@ -127,12 +127,17 @@ export function tickOneSkillState(skills: SkillState, dtMs: number): { skills: S
 
 export function tickSkills(state: GameState, dtMs: number): GameState {
   const player = tickOneSkillState(state.skills, dtMs);
-  const rival = tickOneSkillState(state.rivalSkills, dtMs);
-  if (!player.changed && !rival.changed) return state;
+  let rivalsChanged = false;
+  const rivalSkills = state.rivalSkills.map((rs) => {
+    const rival = tickOneSkillState(rs, dtMs);
+    if (rival.changed) rivalsChanged = true;
+    return rival.skills;
+  });
+  if (!player.changed && !rivalsChanged) return state;
   return {
     ...state,
     skills: player.skills,
-    rivalSkills: rival.skills,
+    rivalSkills,
     version: state.version + 1,
   };
 }
@@ -219,17 +224,18 @@ function applyPushThroughSkill(state: GameState): SkillUseResult {
 }
 
 function applyJamSignalSkill(state: GameState): SkillUseResult {
+  const rivals = state.rivals.map((rival) => ({
+    ...rival,
+    stun: SKILL_JAM_STUN_MS,
+    jamStun: true,
+    isPicking: false,
+    pickProgress: 0,
+  }));
   return {
     state: {
       ...state,
       skills: resetGauge(state.skills),
-      rival: {
-        ...state.rival,
-        stun: SKILL_JAM_STUN_MS,
-        jamStun: true,
-        isPicking: false,
-        pickProgress: 0,
-      },
+      rivals,
       version: state.version + 1,
     },
     used: true,

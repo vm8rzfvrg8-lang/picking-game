@@ -2,6 +2,7 @@ import {
   COLLISION_STUN_LOSER_MS,
   COLLISION_STUN_WINNER_MS,
   Direction,
+  MAX_LOOP_ITERATIONS_PER_FRAME,
   Tile,
 } from './constants';
 import {
@@ -149,7 +150,10 @@ export function backOppositeFlowArrow(
     dirs.push('left', 'right');
   }
 
+  let dirTries = 0;
   for (const dir of dirs) {
+    dirTries++;
+    if (dirTries > MAX_LOOP_ITERATIONS_PER_FRAME) break;
     const nx = x + DELTA[dir].dx;
     const ny = y + DELTA[dir].dy;
     const hit = tryCell(nx, ny);
@@ -191,7 +195,7 @@ export function backAsYield(
   if (along) return along;
   const away = tryCell(OPPOSITE[aggressorDir]);
   if (away) return away;
-  return backFromCollision(grid, x, y, null, avoid);
+  return { x, y };
 }
 
 /** Back after a bump: lane tiles use arrow rules; off-lane uses opposite of move dir. */
@@ -212,6 +216,46 @@ export function backFromCollision(
   return { x, y };
 }
 
+/** All character cells except the entity being knocked back (pre-collision positions). */
+export function listOccupiedCells(
+  occupiers: ReadonlyArray<{ x: number; y: number }>,
+  fromX: number,
+  fromY: number,
+): { x: number; y: number }[] {
+  return occupiers.filter((o) => o.x !== fromX || o.y !== fromY);
+}
+
+/**
+ * Simple knockback: one step via arrow/yield rules.
+ * Stays put if the target is a wall, shelf, or another character.
+ */
+export function applySimpleKnockback(
+  grid: Tile[][],
+  fromX: number,
+  fromY: number,
+  moveDir: Direction | null,
+  avoid: { x: number; y: number } | null,
+  mode: 'collision' | 'yield',
+  aggressorDir: Direction | undefined,
+  occupiers: ReadonlyArray<{ x: number; y: number }>,
+): { x: number; y: number } {
+  const candidate =
+    mode === 'yield' && aggressorDir
+      ? backAsYield(grid, fromX, fromY, aggressorDir, avoid)
+      : backFromCollision(grid, fromX, fromY, moveDir, avoid);
+
+  if (candidate.x === fromX && candidate.y === fromY) return candidate;
+  if (!isWalkable(grid, candidate.x, candidate.y)) return { x: fromX, y: fromY };
+
+  let occupierChecks = 0;
+  for (const o of listOccupiedCells(occupiers, fromX, fromY)) {
+    occupierChecks++;
+    if (occupierChecks > MAX_LOOP_ITERATIONS_PER_FRAME) break;
+    if (o.x === candidate.x && o.y === candidate.y) return { x: fromX, y: fromY };
+  }
+  return candidate;
+}
+
 /** If two entities share a cell, push the wrong-way one (or rival) to a free neighbor. */
 export function separateIfOverlapping(
   grid: Tile[][],
@@ -227,7 +271,10 @@ export function separateIfOverlapping(
   const cx = player.x;
   const cy = player.y;
   const freeNeighbors: { x: number; y: number }[] = [];
+  let neighborScans = 0;
   for (const dir of ['up', 'down', 'left', 'right'] as Direction[]) {
+    neighborScans++;
+    if (neighborScans > MAX_LOOP_ITERATIONS_PER_FRAME) break;
     const nx = cx + DELTA[dir].dx;
     const ny = cy + DELTA[dir].dy;
     if (isWalkable(grid, nx, ny)) freeNeighbors.push({ x: nx, y: ny });

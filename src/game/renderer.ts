@@ -1,4 +1,4 @@
-import { COLORS, GameState, GRID_H, GRID_W, TILE } from './constants';
+import { COLORS, GameState, GRID_H, GRID_W, RIVAL_PALETTE, TILE } from './constants';
 import { drawFlowArrow, drawMainAisleCenterLine, flowAt, isWrongWay } from './flow';
 import { isGoalCell, isShelf } from './levelgen';
 
@@ -21,6 +21,7 @@ export interface CharacterDrawOpts {
   speedBoost?: boolean;
   pushThrough?: boolean;
   jamStun?: boolean;
+  rivalIndex?: number;
 }
 
 export function drawCharacterAt(
@@ -146,10 +147,21 @@ function renderInternal(ctx: CanvasRenderingContext2D, state: GameState, opts: R
     );
   }
 
-  // Rival
-  drawRival(ctx, state.rival.x, state.rival.y, state.rival.facing, opts.blink, state.rival.stun > 0);
-  if (state.rival.isPicking) {
-    drawPickGauge(ctx, state.rival.x, state.rival.y, state.rival.pickProgress, COLORS.rivalGauge, COLORS.rivalGaugeLight);
+  // CPUs
+  for (const rival of state.rivals) {
+    drawRival(
+      ctx,
+      rival.x,
+      rival.y,
+      rival.facing,
+      opts.blink,
+      rival.stun > 0,
+      rival.id,
+    );
+    if (rival.isPicking) {
+      const palette = RIVAL_PALETTE[rival.id % RIVAL_PALETTE.length];
+      drawPickGauge(ctx, rival.x, rival.y, rival.pickProgress, palette.body, palette.light);
+    }
   }
 
   // Player
@@ -195,10 +207,12 @@ function drawFloor(ctx: CanvasRenderingContext2D, grid: string[][], state: GameS
           state.player.x === x &&
           state.player.y === y &&
           isWrongWay(x, y, state.player.lastMoveDir);
-        const rivalWrong =
-          state.rival.x === x &&
-          state.rival.y === y &&
-          isWrongWay(x, y, state.rival.lastMoveDir);
+        const rivalWrong = state.rivals.some(
+          (rival) =>
+            rival.x === x &&
+            rival.y === y &&
+            isWrongWay(x, y, rival.lastMoveDir),
+        );
         drawFlowArrow(ctx, x, y, TILE, playerWrong || rivalWrong);
       }
     }
@@ -506,8 +520,9 @@ function drawRival(
   facing: 'up' | 'down' | 'left' | 'right',
   blink: number,
   stunned: boolean,
+  rivalIndex = 0,
 ) {
-  drawCharacter(ctx, gx, gy, facing, blink, stunned, 'rival');
+  drawCharacter(ctx, gx, gy, facing, blink, stunned, 'rival', { rivalIndex });
 }
 
 function drawCharacter(
@@ -533,11 +548,15 @@ function drawCharacter(
   ctx.scale(1, squash);
   ctx.translate(-cx, -(cy + oy));
 
-  const body = who === 'player' ? COLORS.player : COLORS.rival;
-  const bodyLight = who === 'player' ? COLORS.playerLight : COLORS.rivalLight;
-  const bodyDark = who === 'player' ? COLORS.playerDark : COLORS.rivalDark;
-  const outline = who === 'player' ? COLORS.playerOutline : COLORS.rivalOutline;
-  const stunColor = who === 'player' ? COLORS.playerStun : COLORS.rivalStun;
+  const palette =
+    who === 'rival'
+      ? RIVAL_PALETTE[(opts?.rivalIndex ?? 0) % RIVAL_PALETTE.length]
+      : null;
+  const body = who === 'player' ? COLORS.player : palette!.body;
+  const bodyLight = who === 'player' ? COLORS.playerLight : palette!.light;
+  const bodyDark = who === 'player' ? COLORS.playerDark : palette!.dark;
+  const outline = who === 'player' ? COLORS.playerOutline : palette!.outline;
+  const stunColor = who === 'player' ? COLORS.playerStun : palette!.stun;
   const speedBoost = opts?.speedBoost && who === 'player' && !stunned;
   const pushThrough = opts?.pushThrough && who === 'player' && !stunned;
 

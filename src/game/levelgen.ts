@@ -93,7 +93,8 @@ export function bfsDistances(grid: Tile[][], sx: number, sy: number): number[][]
   if (!isWalkable(grid, sx, sy)) return dist;
   const q: { x: number; y: number }[] = [{ x: sx, y: sy }];
   dist[sy][sx] = 0;
-  while (q.length) {
+  const maxSteps = GRID_W * GRID_H;
+  for (let step = 0; step < maxSteps && q.length > 0; step++) {
     const { x, y } = q.shift()!;
     const d = dist[y][x];
     for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
@@ -122,7 +123,8 @@ export function bfsDistancesWeighted(
   type Node = { x: number; y: number; d: number };
   const q: Node[] = [{ x: sx, y: sy, d: 0 }];
   dist[sy][sx] = 0;
-  while (q.length) {
+  const maxSteps = GRID_W * GRID_H;
+  for (let step = 0; step < maxSteps && q.length > 0; step++) {
     q.sort((a, b) => a.d - b.d);
     const { x, y, d } = q.shift()!;
     if (d > dist[y][x]) continue;
@@ -237,4 +239,49 @@ export function findWalkableNear(
     }
   }
   return { x: 1, y: 1 };
+}
+
+/** Spread CPU spawn points away from the player start. */
+export function findCpuSpawnPoints(
+  grid: Tile[][],
+  playerSpawn: { x: number; y: number },
+  count: number,
+): { x: number; y: number }[] {
+  const used = new Set<string>([`${playerSpawn.x},${playerSpawn.y}`]);
+  const candidates: { x: number; y: number; score: number }[] = [];
+
+  for (let y = 1; y < GRID_H - 1; y++) {
+    for (let x = 1; x < GRID_W - 1; x++) {
+      if (!isWalkable(grid, x, y)) continue;
+      const dist = Math.abs(x - playerSpawn.x) + Math.abs(y - playerSpawn.y);
+      const cornerBonus =
+        (x <= 2 || x >= GRID_W - 3 ? 2 : 0) + (y <= 2 || y >= GRID_H - 3 ? 2 : 0);
+      candidates.push({ x, y, score: dist + cornerBonus });
+    }
+  }
+
+  candidates.sort((a, b) => b.score - a.score);
+
+  const spawns: { x: number; y: number }[] = [];
+  for (const cell of candidates) {
+    if (spawns.length >= count) break;
+    const key = `${cell.x},${cell.y}`;
+    if (used.has(key)) continue;
+    const tooClose = spawns.some(
+      (s) => Math.abs(s.x - cell.x) + Math.abs(s.y - cell.y) < 3,
+    );
+    if (tooClose) continue;
+    spawns.push({ x: cell.x, y: cell.y });
+    used.add(key);
+  }
+
+  for (const cell of candidates) {
+    if (spawns.length >= count) break;
+    const key = `${cell.x},${cell.y}`;
+    if (used.has(key)) continue;
+    spawns.push({ x: cell.x, y: cell.y });
+    used.add(key);
+  }
+
+  return spawns;
 }

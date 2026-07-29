@@ -14,6 +14,10 @@ import {
 } from 'lucide-react';
 import { Difficulty, DIFFICULTY_PRESETS } from '../game/difficulty';
 import {
+  MAX_CPU_COUNT,
+  MIN_CPU_COUNT,
+} from '../game/constants';
+import {
   SKILL_DEFINITIONS,
   SKILL_TYPES,
   SkillType,
@@ -21,14 +25,20 @@ import {
 
 interface Props {
   difficulty: Difficulty;
+  cpuCount: number;
   selectedSkill: SkillType;
   onDifficultyChange: (d: Difficulty) => void;
+  onCpuCountChange: (count: number) => void;
   onSkillChange: (skill: SkillType) => void;
   onStart: () => void;
   onTutorial: () => void;
 }
 
 const DIFFICULTIES: Difficulty[] = ['easy', 'normal', 'hard'];
+const CPU_COUNTS = Array.from(
+  { length: MAX_CPU_COUNT - MIN_CPU_COUNT + 1 },
+  (_, i) => MIN_CPU_COUNT + i,
+);
 
 const SKILL_ICONS = {
   [SkillType.SuperSpeed]: Zap,
@@ -123,8 +133,10 @@ function RulesModal({ onClose }: { onClose: () => void }) {
 
 export function StartScreen({
   difficulty,
+  cpuCount,
   selectedSkill,
   onDifficultyChange,
+  onCpuCountChange,
   onSkillChange,
   onStart,
   onTutorial,
@@ -151,7 +163,7 @@ export function StartScreen({
                 </h1>
               </div>
               <p className="mt-0.5 text-[10px] text-[#9fb0d8] sm:text-xs">
-                図書館倉庫ピッキング・レース / 1人 vs CPU
+                図書館倉庫ピッキング・レース / 1人 vs CPU（最大{MAX_CPU_COUNT}人）
               </p>
             </div>
             <button
@@ -240,6 +252,39 @@ export function StartScreen({
                 })}
               </div>
             </div>
+          </div>
+
+          <div className="start-panel shrink-0 rounded-xl border border-[#2a3a5d] bg-[#0c1530] p-2 sm:p-3">
+            <p className="mb-1.5 text-[10px] font-bold text-[#cfe0ff] sm:text-xs">
+              CPU人数
+            </p>
+            <div className="grid grid-cols-7 gap-1">
+              {CPU_COUNTS.map((n) => {
+                const active = n === cpuCount;
+                return (
+                  <button
+                    key={n}
+                    type="button"
+                    onClick={() => onCpuCountChange(n)}
+                    className={`rounded-md border px-1 py-1.5 text-center transition sm:py-2 ${
+                      active
+                        ? 'border-[#ff8c42] bg-[#ff8c42]/15 text-[#ff8c42]'
+                        : 'border-[#2a3a5d] bg-[#121a33] text-[#9fb0d8] hover:border-[#3a4a6d]'
+                    }`}
+                  >
+                    <span
+                      className="block text-[9px] font-black leading-tight sm:text-[10px]"
+                      style={{ fontFamily: '"Press Start 2P", monospace' }}
+                    >
+                      {n}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            <p className="mt-1.5 text-[9px] leading-snug text-[#9fb0d8] sm:text-[10px]">
+              プレイヤー1体 + CPU{cpuCount}体が同時に競争します
+            </p>
           </div>
 
           {/* Footer: controls + actions */}
