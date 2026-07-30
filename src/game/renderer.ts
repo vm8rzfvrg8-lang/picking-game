@@ -11,6 +11,105 @@ function bookColor(x: number, y: number): string {
   return arr[(x * 7 + y * 13) % arr.length];
 }
 
+/** Calm passage floor — low-contrast dark stone, no tile seams. */
+const PASSAGE_FLOOR = {
+  base: '#464038',
+  speckA: '#403c36',
+  speckB: '#3a3632',
+} as const;
+
+function drawPassageFloorTile(
+  ctx: CanvasRenderingContext2D,
+  ox: number,
+  oy: number,
+  gx: number,
+  gy: number,
+) {
+  ctx.fillStyle = PASSAGE_FLOOR.base;
+  ctx.fillRect(ox, oy, TILE, TILE);
+
+  const seed = gx * 17 + gy * 31;
+  for (let i = 0; i < 5; i++) {
+    if ((seed + i * 5) % 4 !== 0) continue;
+    const px = (seed + i * 11) % (TILE - 2) + 1;
+    const py = (seed + i * 17) % (TILE - 2) + 1;
+    ctx.fillStyle = i % 2 === 0 ? PASSAGE_FLOOR.speckA : PASSAGE_FLOOR.speckB;
+    ctx.fillRect(ox + px, oy + py, 1, 1);
+  }
+
+  if (seed % 9 === 0) {
+    ctx.fillStyle = PASSAGE_FLOOR.speckB;
+    ctx.fillRect(ox + 6 + (seed % 22), oy + 8 + ((seed >> 2) % 18), 2, 1);
+  }
+}
+
+/** Dense wood / old-book palette for S (shelf) tiles — visual only. */
+const SHELF_PIXEL = {
+  backDark: '#140c06',
+  backMid: '#221610',
+  backLight: '#2e1e14',
+  frameDark: '#2a1a0c',
+  frameMid: '#5a3818',
+  frameLight: '#8a5830',
+  frameHi: '#b07840',
+  grain: '#3a2414',
+  board: '#4a3018',
+  boardLight: '#6a4428',
+  boardShadow: '#2a1808',
+  dust: '#9a9080',
+  label: '#c8a850',
+  page: '#d8d0c0',
+} as const;
+
+function drawLegacyFloorBase(
+  ctx: CanvasRenderingContext2D,
+  ox: number,
+  oy: number,
+  gx: number,
+  gy: number,
+) {
+  const checker = (gx + gy) % 2 === 0;
+  ctx.fillStyle = checker ? COLORS.floorA : COLORS.floorB;
+  ctx.fillRect(ox, oy, TILE, TILE);
+
+  const grad = ctx.createRadialGradient(
+    ox + TILE / 2, oy + TILE / 2, 1,
+    ox + TILE / 2, oy + TILE / 2, TILE * 0.7,
+  );
+  grad.addColorStop(0, 'rgba(255,255,255,0.04)');
+  grad.addColorStop(1, 'rgba(0,0,0,0.08)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(ox, oy, TILE, TILE);
+}
+
+/** Full-canvas warm sepia/amber tint — call after all layers are drawn. */
+export function applyRetroColorFilter(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+) {
+  ctx.save();
+
+  const vignette = ctx.createRadialGradient(
+    width / 2, height / 2, width * 0.15,
+    width / 2, height / 2, Math.max(width, height) * 0.72,
+  );
+  vignette.addColorStop(0, 'rgba(255, 225, 170, 0.05)');
+  vignette.addColorStop(1, 'rgba(110, 75, 35, 0.12)');
+  ctx.fillStyle = vignette;
+  ctx.fillRect(0, 0, width, height);
+
+  ctx.globalCompositeOperation = 'multiply';
+  ctx.fillStyle = 'rgba(255, 238, 210, 0.07)';
+  ctx.fillRect(0, 0, width, height);
+
+  ctx.globalCompositeOperation = 'overlay';
+  ctx.fillStyle = 'rgba(170, 110, 50, 0.05)';
+  ctx.fillRect(0, 0, width, height);
+
+  ctx.restore();
+}
+
 export function render(ctx: CanvasRenderingContext2D, state: GameState, opts: RenderOpts) {
   renderInternal(ctx, state, opts);
 }
@@ -116,18 +215,10 @@ export function eraseFloorCell(ctx: CanvasRenderingContext2D, state: GameState, 
   if (t !== 'F' && t !== 'G') return;
   const ox = gx * TILE;
   const oy = gy * TILE;
-  const checker = (gx + gy) % 2 === 0;
-  ctx.fillStyle = checker ? COLORS.floorA : COLORS.floorB;
-  ctx.fillRect(ox, oy, TILE, TILE);
-  const grad = ctx.createRadialGradient(
-    ox + TILE / 2, oy + TILE / 2, 1,
-    ox + TILE / 2, oy + TILE / 2, TILE * 0.7,
-  );
-  grad.addColorStop(0, 'rgba(255,255,255,0.04)');
-  grad.addColorStop(1, 'rgba(0,0,0,0.08)');
-  ctx.fillStyle = grad;
-  ctx.fillRect(ox, oy, TILE, TILE);
-  if (t === 'G') {
+  if (t === 'F') {
+    drawPassageFloorTile(ctx, ox, oy, gx, gy);
+  } else {
+    drawLegacyFloorBase(ctx, ox, oy, gx, gy);
     drawGoalCell(ctx, ox, oy);
   }
 }
@@ -160,7 +251,6 @@ function renderInternal(ctx: CanvasRenderingContext2D, state: GameState, opts: R
   ctx.imageSmoothingEnabled = false;
 
   drawFloor(ctx, grid, state);
-  drawGridLines(ctx);
 
   // Bookshelves
   for (let y = 0; y < GRID_H; y++) {
@@ -236,23 +326,11 @@ function drawFloor(ctx: CanvasRenderingContext2D, grid: string[][], state: GameS
       if (t !== 'F' && t !== 'G') continue;
       const ox = x * TILE;
       const oy = y * TILE;
-      const checker = (x + y) % 2 === 0;
-      const base = checker ? COLORS.floorA : COLORS.floorB;
-      ctx.fillStyle = base;
-      ctx.fillRect(ox, oy, TILE, TILE);
 
-      const grad = ctx.createRadialGradient(
-        ox + TILE / 2, oy + TILE / 2, 1,
-        ox + TILE / 2, oy + TILE / 2, TILE * 0.7,
-      );
-      grad.addColorStop(0, 'rgba(255,255,255,0.04)');
-      grad.addColorStop(1, 'rgba(0,0,0,0.08)');
-      ctx.fillStyle = grad;
-      ctx.fillRect(ox, oy, TILE, TILE);
-
-      if ((x * 3 + y * 7) % 5 === 0) {
-        ctx.fillStyle = COLORS.floorC;
-        ctx.fillRect(ox + ((x * 5) % (TILE - 2)), oy + ((y * 3) % (TILE - 2)), 2, 2);
+      if (t === 'F') {
+        drawPassageFloorTile(ctx, ox, oy, x, y);
+      } else {
+        drawLegacyFloorBase(ctx, ox, oy, x, y);
       }
 
       if (flowAt(x, y)) {
@@ -271,23 +349,6 @@ function drawFloor(ctx: CanvasRenderingContext2D, grid: string[][], state: GameS
     }
   }
   drawMainAisleCenterLine(ctx, TILE);
-}
-
-function drawGridLines(ctx: CanvasRenderingContext2D) {
-  ctx.strokeStyle = COLORS.floorGrout;
-  ctx.lineWidth = 1;
-  for (let x = 0; x <= GRID_W; x++) {
-    ctx.beginPath();
-    ctx.moveTo(Math.round(x * TILE) + 0.5, 0);
-    ctx.lineTo(Math.round(x * TILE) + 0.5, GRID_H * TILE);
-    ctx.stroke();
-  }
-  for (let y = 0; y <= GRID_H; y++) {
-    ctx.beginPath();
-    ctx.moveTo(0, Math.round(y * TILE) + 0.5);
-    ctx.lineTo(GRID_W * TILE, Math.round(y * TILE) + 0.5);
-    ctx.stroke();
-  }
 }
 
 function drawWall(
@@ -353,82 +414,150 @@ function drawShelf(
   ox: number,
   oy: number,
 ) {
-  // Dark recessed back
-  const backGrad = ctx.createLinearGradient(ox, oy, ox, oy + TILE);
-  backGrad.addColorStop(0, COLORS.shelfBackDark);
-  backGrad.addColorStop(0.5, COLORS.shelfBack);
-  backGrad.addColorStop(1, COLORS.shelfBackDark);
-  ctx.fillStyle = backGrad;
+  const seed = gx * 23 + gy * 41;
+
+  // Recessed back — dithered shadow
+  ctx.fillStyle = SHELF_PIXEL.backDark;
   ctx.fillRect(ox, oy, TILE, TILE);
-
-  // Wood frame
-  const frameW = 3;
-  const frameGrad = ctx.createLinearGradient(ox, oy, ox + TILE, oy);
-  frameGrad.addColorStop(0, COLORS.shelfWoodDark);
-  frameGrad.addColorStop(0.3, COLORS.shelfWood);
-  frameGrad.addColorStop(0.7, COLORS.shelfWoodLight);
-  frameGrad.addColorStop(1, COLORS.shelfWoodDark);
-  ctx.fillStyle = frameGrad;
-  // Top and bottom boards
-  ctx.fillRect(ox, oy, TILE, frameW);
-  ctx.fillRect(ox, oy + TILE - frameW, TILE, frameW);
-  // Left and right posts
-  ctx.fillRect(ox, oy, frameW, TILE);
-  ctx.fillRect(ox + TILE - frameW, oy, frameW, TILE);
-
-  // Wood grain on frame
-  ctx.fillStyle = 'rgba(0,0,0,0.15)';
-  ctx.fillRect(ox + 1, oy + 1, TILE - 2, 1);
-  ctx.fillRect(ox + 1, oy + TILE - 2, TILE - 2, 1);
-  ctx.fillStyle = COLORS.shelfWoodHighlight;
-  ctx.fillRect(ox, oy, TILE, 1);
-  ctx.fillRect(ox, oy + TILE - frameW, TILE, 1);
-
-  // Shelf boards (horizontal dividers)
-  const shelfY1 = Math.round(oy + TILE * 0.33);
-  const shelfY2 = Math.round(oy + TILE * 0.66);
-  for (const sy of [shelfY1, shelfY2]) {
-    const bGrad = ctx.createLinearGradient(ox, sy - 2, ox, sy + 2);
-    bGrad.addColorStop(0, COLORS.shelfBoardLight);
-    bGrad.addColorStop(0.5, COLORS.shelfBoard);
-    bGrad.addColorStop(1, COLORS.shelfWoodDark);
-    ctx.fillStyle = bGrad;
-    ctx.fillRect(ox + frameW, sy - 2, TILE - frameW * 2, 3);
-    ctx.fillStyle = 'rgba(255,255,255,0.1)';
-    ctx.fillRect(ox + frameW, sy - 2, TILE - frameW * 2, 1);
+  for (let py = 2; py < TILE - 2; py++) {
+    for (let px = 2; px < TILE - 2; px++) {
+      if ((px + py + seed) % 5 === 0) {
+        ctx.fillStyle = SHELF_PIXEL.backMid;
+        ctx.fillRect(ox + px, oy + py, 1, 1);
+      } else if ((px * 3 + py + seed) % 11 === 0) {
+        ctx.fillStyle = SHELF_PIXEL.backLight;
+        ctx.fillRect(ox + px, oy + py, 1, 1);
+      }
+    }
   }
 
-  // Books on each shelf
-  const rows = [oy + 4, shelfY1 + 1, shelfY2 + 1];
-  const rowEnds = [shelfY1 - 3, shelfY2 - 3, oy + TILE - 4];
-  for (let r = 0; r < 3; r++) {
-    let bx = ox + frameW + 1;
-    const limit = ox + TILE - frameW - 1;
-    while (bx < limit) {
-      const w = 2 + ((gx * 3 + gy * 5 + r * 7 + bx) % 3);
-      const h = rowEnds[r] - rows[r];
-      const c = bookColor(gx + bx, gy + r);
-      // Book spine
-      ctx.fillStyle = c;
-      ctx.fillRect(bx, rows[r], w, h);
-      // Spine highlight (left edge)
-      ctx.fillStyle = COLORS.bookHighlight;
-      ctx.fillRect(bx, rows[r], 1, h);
-      // Spine shadow (right edge)
-      ctx.fillStyle = COLORS.bookShadow;
-      ctx.fillRect(bx + w - 1, rows[r], 1, h);
-      // Top page line
-      if (h > 4) {
-        ctx.fillStyle = 'rgba(255,255,255,0.15)';
-        ctx.fillRect(bx, rows[r], w, 1);
+  const frame = 3;
+  const innerL = ox + frame;
+  const innerR = ox + TILE - frame;
+  const innerT = oy + frame;
+  const innerB = oy + TILE - frame;
+
+  // Outer frame — dark wood border
+  ctx.fillStyle = SHELF_PIXEL.frameDark;
+  ctx.fillRect(ox, oy, TILE, TILE);
+
+  // Frame face with horizontal grain pixels
+  for (let side = 0; side < 4; side++) {
+    const isH = side < 2;
+    const sy = side === 0 ? oy : oy + TILE - frame;
+    const sx = side === 2 ? ox : ox + TILE - frame;
+    if (isH) {
+      ctx.fillStyle = SHELF_PIXEL.frameMid;
+      ctx.fillRect(ox, sy, TILE, frame);
+      ctx.fillStyle = SHELF_PIXEL.frameLight;
+      ctx.fillRect(ox + 1, sy, TILE - 2, 1);
+      ctx.fillStyle = SHELF_PIXEL.frameHi;
+      ctx.fillRect(ox + 2, sy, TILE - 4, 1);
+      for (let gx2 = 0; gx2 < TILE; gx2 += 4) {
+        ctx.fillStyle = SHELF_PIXEL.grain;
+        ctx.fillRect(ox + gx2, sy + 1, 2, 1);
       }
+      ctx.fillStyle = SHELF_PIXEL.frameDark;
+      ctx.fillRect(ox, sy + frame - 1, TILE, 1);
+    } else {
+      ctx.fillStyle = SHELF_PIXEL.frameMid;
+      ctx.fillRect(sx, oy, frame, TILE);
+      ctx.fillStyle = SHELF_PIXEL.frameLight;
+      ctx.fillRect(sx, oy + 1, 1, TILE - 2);
+      ctx.fillStyle = SHELF_PIXEL.frameHi;
+      ctx.fillRect(sx + 1, oy + 2, 1, TILE - 4);
+      for (let gy2 = 0; gy2 < TILE; gy2 += 5) {
+        ctx.fillStyle = SHELF_PIXEL.grain;
+        ctx.fillRect(sx + 1, oy + gy2, 1, 2);
+      }
+      ctx.fillStyle = SHELF_PIXEL.frameDark;
+      ctx.fillRect(sx + frame - 1, oy, 1, TILE);
+    }
+  }
+
+  // Horizontal shelf boards (pixel-thick planks)
+  const shelfYs = [oy + 11, oy + 23];
+  for (const sy of shelfYs) {
+    ctx.fillStyle = SHELF_PIXEL.boardShadow;
+    ctx.fillRect(innerL, sy, innerR - innerL, 3);
+    ctx.fillStyle = SHELF_PIXEL.board;
+    ctx.fillRect(innerL, sy, innerR - innerL, 2);
+    ctx.fillStyle = SHELF_PIXEL.boardLight;
+    ctx.fillRect(innerL, sy, innerR - innerL, 1);
+    for (let px = innerL; px < innerR; px += 6) {
+      ctx.fillStyle = SHELF_PIXEL.grain;
+      ctx.fillRect(px, sy + 1, 3, 1);
+    }
+  }
+
+  // Three book rows between shelves
+  const rows = [
+    { top: innerT, bottom: shelfYs[0] - 1 },
+    { top: shelfYs[0] + 3, bottom: shelfYs[1] - 1 },
+    { top: shelfYs[1] + 3, bottom: innerB },
+  ];
+
+  for (let r = 0; r < rows.length; r++) {
+    const { top, bottom } = rows[r];
+    const rowH = bottom - top;
+    let bx = innerL + 1;
+    while (bx < innerR - 2) {
+      const w = 2 + ((seed + r * 7 + bx) % 3);
+      if (bx + w >= innerR - 1) break;
+
+      const baseColor = bookColor(gx + bx, gy + r);
+      ctx.fillStyle = baseColor;
+      ctx.fillRect(bx, top, w, rowH);
+
+      // Spine highlight (left edge, worn leather sheen)
+      ctx.fillStyle = COLORS.bookHighlight;
+      ctx.fillRect(bx, top, 1, rowH);
+
+      // Spine shadow / depth
+      ctx.fillStyle = COLORS.bookShadow;
+      ctx.fillRect(bx + w - 1, top, 1, rowH);
+      ctx.fillRect(bx, top + rowH - 1, w, 1);
+
+      // Page edge peek (top)
+      if (rowH > 3) {
+        ctx.fillStyle = SHELF_PIXEL.page;
+        ctx.fillRect(bx + 1, top, w - 2, 1);
+        ctx.fillStyle = 'rgba(255,255,255,0.12)';
+        ctx.fillRect(bx + 1, top + 1, w - 2, 1);
+      }
+
+      // Gold title band on some spines
+      if ((seed + bx + r) % 4 === 0 && rowH > 5) {
+        const bandY = top + 2 + ((seed + bx) % Math.max(1, rowH - 5));
+        ctx.fillStyle = SHELF_PIXEL.label;
+        ctx.fillRect(bx, bandY, w, 2);
+        ctx.fillStyle = 'rgba(255,255,200,0.4)';
+        ctx.fillRect(bx, bandY, w, 1);
+      }
+
+      // Faded spine lettering dots
+      if (w >= 3 && rowH > 6) {
+        ctx.fillStyle = 'rgba(0,0,0,0.25)';
+        const dotY = top + 3 + ((seed + bx) % (rowH - 5));
+        ctx.fillRect(bx + 1, dotY, 1, 1);
+        if (w >= 4) ctx.fillRect(bx + 2, dotY + 2, 1, 1);
+      }
+
       bx += w + 1;
     }
   }
 
-  // Top frame highlight
-  ctx.fillStyle = COLORS.shelfWoodHighlight;
-  ctx.fillRect(ox + 1, oy, TILE - 2, 1);
+  // Dust motes and age spots (stay inside tile)
+  for (let i = 0; i < 6; i++) {
+    const dx = ox + 4 + ((seed + i * 13) % (TILE - 8));
+    const dy = oy + 4 + ((seed + i * 19) % (TILE - 8));
+    ctx.fillStyle = i % 2 === 0 ? 'rgba(154,144,128,0.35)' : 'rgba(0,0,0,0.12)';
+    ctx.fillRect(dx, dy, 1, 1);
+  }
+
+  // Top frame highlight pixel row
+  ctx.fillStyle = SHELF_PIXEL.frameHi;
+  ctx.fillRect(ox + 1, oy + 1, TILE - 2, 1);
 }
 
 function drawTargetGlow(

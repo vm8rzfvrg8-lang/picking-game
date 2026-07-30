@@ -4,7 +4,6 @@ import {
   Phase,
   PICK_COUNT,
   PICK_DURATION_MS,
-  COLLISION_STUN_LOSER_MS,
   YIELD_COLLISION_WINDOW_MS,
   PickTarget,
   RivalEntity,
@@ -23,7 +22,7 @@ import {
   isWrongWay,
   separateIfOverlapping,
 } from './flow';
-import { createInitialSkills, isPushThroughActive, tickSkills, useSkill, SkillType } from './skills';
+import { createInitialSkills, isPushThroughActive, isSuperSpeedActive, tickSkills, useSkill, SkillType } from './skills';
 import { tutorialRivalPatrolDir } from './tutorial/layout';
 import {
   assignTargets,
@@ -66,6 +65,33 @@ function createRivalEntity(
   };
 }
 
+function findRivalIndexAt(
+  state: GameState,
+  x: number,
+  y: number,
+  ignoreRivalIndex?: number,
+): number | null {
+  for (let i = 0; i < state.rivals.length; i++) {
+    if (i === ignoreRivalIndex) continue;
+    if (state.rivals[i].x === x && state.rivals[i].y === y) return i;
+  }
+  return null;
+}
+
+function isCellOccupiedByRival(
+  state: GameState,
+  x: number,
+  y: number,
+  ignoreRivalIndex?: number,
+): boolean {
+  for (let i = 0; i < state.rivals.length; i++) {
+    if (i === ignoreRivalIndex) continue;
+    const r = state.rivals[i];
+    if (r.x === x && r.y === y) return true;
+  }
+  return false;
+}
+
 function isCellOccupied(
   state: GameState,
   x: number,
@@ -73,13 +99,7 @@ function isCellOccupied(
   ignoreRivalIndex?: number,
 ): boolean {
   if (state.player.x === x && state.player.y === y) return true;
-  for (let i = 0; i < state.rivals.length; i++) {
-    if (i >= MAX_LOOP_ITERATIONS_PER_FRAME) break;
-    if (i === ignoreRivalIndex) continue;
-    const r = state.rivals[i];
-    if (r.x === x && r.y === y) return true;
-  }
-  return false;
+  return isCellOccupiedByRival(state, x, y, ignoreRivalIndex);
 }
 
 export type { Direction } from './constants';
@@ -303,8 +323,9 @@ function scoreMoveCandidate(
 }
 
 function collectPathCandidates(
-  grid: GameState['grid'],
+  s: GameState,
   r: RivalEntity,
+  rivalIndex: number,
   dist: number[][],
   cpu: DifficultyConfig,
 ): MoveCandidate[] {
@@ -315,13 +336,20 @@ function collectPathCandidates(
     if (scans > MAX_LOOP_ITERATIONS_PER_FRAME) break;
     const nx = r.x + dx;
     const ny = r.y + dy;
-    if (!isWalkable(grid, nx, ny)) continue;
+    if (!isWalkable(s.grid, nx, ny)) continue;
     const candidate = scoreMoveCandidate(r, nx, ny, dist, cpu);
     if (candidate) candidates.push(candidate);
   }
   candidates.sort((a, b) => a.score - b.score);
   return candidates;
 }
+
+type RivalStepResult = {
+  rival: RivalEntity;
+  collision: boolean;
+  attemptDir: Direction | null;
+  rivalRivalCollision: { blockerIndex: number } | null;
+};
 
 function applyRivalMove(
   s: GameState,
@@ -331,69 +359,84 @@ function applyRivalMove(
   nx: number,
   ny: number,
   events: GameEvent[],
-): { rival: RivalEntity; collision: boolean; attemptDir: Direction | null } {
+): RivalStepResult {
   if (nx === s.player.x && ny === s.player.y) {
     events.push({ type: 'bump', who: 'rival' });
-    return { rival: r, collision: true, attemptDir: moveDir };
+    return { rival: r, collision: true, attemptDir: moveDir, rivalRivalCollision: null };
   }
-  if (isCellOccupied(s, nx, ny, rivalIndex)) {
-    return { rival: r, collision: false, attemptDir: null };
+  if (isCellOccupiedByRival(s, nx, ny, rivalIndex)) {
+    events.push({ type: 'bump', who: 'rival' });
+    const blockerIndex = findRivalIndexAt(s, nx, ny, rivalIndex);
+    return {
+      rival: r,
+      collision: false,
+      attemptDir: moveDir,
+      rivalRivalCollision: blockerIndex !== null ? { blockerIndex } : null,
+    };
   }
   const fromX = r.x;
   const fromY = r.y;
   const next = { ...r, x: nx, y: ny, facing: moveDir, lastMoveDir: moveDir };
   events.push({ type: 'move', who: 'rival', fromX, fromY, dir: moveDir });
-  return { rival: next, collision: false, attemptDir: null };
+  return { rival: next, collision: false, attemptDir: null, rivalRivalCollision: null };
 }
 
-/** Goal-directed CPU step: BFS path + blocked fallback (sidestep or wait). */
+/** Safety: separate overlapping CPUs using the same neighbor logic as player–CPU. */
+function resolveRivalOverlaps(s: GameState): GameState {
+  const rivals = [...s.rivals];
+  let pairChecks = 0;
+  for (let i = 0; i < rivals.length; i++) {
+    for (let j = i + 1; j < rivals.length; j++) {
+      pairChecks++;
+      if (pairChecks > MAX_LOOP_ITERATIONS_PER_FRAME) {
+        return { ...s, rivals };
+      }
+      if (rivals[i].x !== rivals[j].x || rivals[i].y !== rivals[j].y) continue;
+      const sep = separateIfOverlapping(
+        s.grid,
+        { x: rivals[i].x, y: rivals[i].y },
+        { x: rivals[j].x, y: rivals[j].y },
+        false,
+        false,
+      );
+      rivals[i] = { ...rivals[i], x: sep.player.x, y: sep.player.y };
+      rivals[j] = { ...rivals[j], x: sep.rival.x, y: sep.rival.y };
+    }
+  }
+  return { ...s, rivals };
+}
+
+/** Goal-directed CPU step: take only the best path cell (Pattern A — no detour). */
 function rivalPathStep(
   s: GameState,
   r: RivalEntity,
   rivalIndex: number,
   cpu: DifficultyConfig,
   events: GameEvent[],
-): { rival: RivalEntity; collision: boolean; attemptDir: Direction | null } {
+): RivalStepResult {
   let dist: number[][] | null = null;
 
   if (r.currentTarget < PICK_COUNT) {
     const t = r.targets[r.currentTarget];
     if (!t || t.done) {
-      return { rival: r, collision: false, attemptDir: null };
+      return { rival: r, collision: false, attemptDir: null, rivalRivalCollision: null };
     }
     dist = pickShelfApproachDistMap(s.grid, t.x, t.y, r.x, r.y);
   } else {
     dist = pickGoalDistMap(s.grid, r.x, r.y);
   }
 
-  if (dist) {
-    const candidates = collectPathCandidates(s.grid, r, dist, cpu);
-    let tries = 0;
-    for (const c of candidates) {
-      tries++;
-      if (tries > MAX_LOOP_ITERATIONS_PER_FRAME) break;
-      const result = applyRivalMove(s, r, rivalIndex, c.dir, c.x, c.y, events);
-      if (result.collision) return result;
-      if (result.rival.x === c.x && result.rival.y === c.y) return result;
-    }
+  if (!dist) {
+    return { rival: r, collision: false, attemptDir: null, rivalRivalCollision: null };
   }
 
-  // Blocked: sidestep to any free neighbor, otherwise wait in place.
-  const shuffled = [...ALL_DIRS].sort(() => Math.random() - 0.5);
-  let sidesteps = 0;
-  for (const moveDir of shuffled) {
-    sidesteps++;
-    if (sidesteps > MAX_LOOP_ITERATIONS_PER_FRAME) break;
-    const { dx, dy } = DELTA[moveDir];
-    const nx = r.x + dx;
-    const ny = r.y + dy;
-    if (!isWalkable(s.grid, nx, ny)) continue;
-    const result = applyRivalMove(s, r, rivalIndex, moveDir, nx, ny, events);
-    if (result.collision) return result;
-    if (result.rival.x === nx && result.rival.y === ny) return result;
+  const candidates = collectPathCandidates(s, r, rivalIndex, dist, cpu);
+  if (candidates.length === 0) {
+    return { rival: r, collision: false, attemptDir: null, rivalRivalCollision: null };
   }
 
-  return { rival: r, collision: false, attemptDir: null };
+  const best = candidates[0];
+  return applyRivalMove(s, r, rivalIndex, best.dir, best.x, best.y, events);
 }
 
 export interface StepResult {
@@ -410,6 +453,7 @@ export type GameEvent =
   | { type: 'pickCancel'; who: 'player' | 'rival' }
   | {
       type: 'collision';
+      involvesPlayer: boolean;
       playerKnockedBack: boolean;
       rivalKnockedBack: boolean;
       playerWrongWay: boolean;
@@ -421,6 +465,8 @@ export type GameEvent =
   | { type: 'yield'; who: 'player' | 'rival' }
   | { type: 'win' }
   | { type: 'lose' };
+
+type CollisionEventDetail = Omit<Extract<GameEvent, { type: 'collision' }>, 'type' | 'involvesPlayer'>;
 
 function finalizePickingAfterCollision(
   s: GameState,
@@ -469,7 +515,7 @@ function finishCollisionFx(
   rivals: RivalEntity[],
   rivalIndex: number,
   events: GameEvent[],
-  detail: Extract<GameEvent, { type: 'collision' }>,
+  detail: CollisionEventDetail,
 ): GameState {
   s.player = player;
   s.rivals = rivals;
@@ -480,7 +526,7 @@ function finishCollisionFx(
     y: (player.y + rival.y) / 2 + 0.5,
   };
   s.lastCollisionElapsed = s.elapsed;
-  events.push(detail);
+  events.push({ type: 'collision', involvesPlayer: true, ...detail });
   return s;
 }
 
@@ -555,7 +601,12 @@ function applyCollision(
       pushDir,
       occupiers,
     );
-    player = { ...player, x: b.x, y: b.y, stun: COLLISION_STUN_LOSER_MS };
+    player = {
+      ...player,
+      x: b.x,
+      y: b.y,
+      stun: stunForCollisionKnockback(true, true, isSuperSpeedActive(s.skills)),
+    };
 
     const separated = separateIfOverlapping(
       grid,
@@ -626,7 +677,11 @@ function applyCollision(
     const rivalKnocked = rival.x !== rxKnock || rival.y !== ryKnock;
     rival = {
       ...rival,
-      stun: stunForCollisionKnockback(rivalKnocked, false),
+      stun: stunForCollisionKnockback(
+        rivalKnocked,
+        false,
+        isSuperSpeedActive(rivalSkills),
+      ),
     };
 
     const finalized = finalizePickingAfterCollision(
@@ -688,7 +743,11 @@ function applyCollision(
     const playerKnocked = player.x !== pxKnock || player.y !== pyKnock;
     player = {
       ...player,
-      stun: stunForCollisionKnockback(playerKnocked, false),
+      stun: stunForCollisionKnockback(
+        playerKnocked,
+        false,
+        isSuperSpeedActive(s.skills),
+      ),
     };
 
     const finalized = finalizePickingAfterCollision(
@@ -789,10 +848,21 @@ function applyCollision(
   const playerKnocked = player.x !== pxKnock || player.y !== pyKnock;
   const rivalKnocked = rival.x !== rxKnock || rival.y !== ryKnock;
 
-  player = { ...player, stun: stunForCollisionKnockback(playerKnocked, pWrong) };
+  player = {
+    ...player,
+    stun: stunForCollisionKnockback(
+      playerKnocked,
+      pWrong,
+      isSuperSpeedActive(s.skills),
+    ),
+  };
   rival = {
     ...rival,
-    stun: stunForCollisionKnockback(rivalKnocked, rWrong),
+    stun: stunForCollisionKnockback(
+      rivalKnocked,
+      rWrong,
+      isSuperSpeedActive(rivalSkills),
+    ),
   };
 
   const finalized = finalizePickingAfterCollision(
@@ -820,6 +890,359 @@ function applyCollision(
     rivalWrongWay: rWrong,
     playerPushed: pWrong || pYield,
     rivalPushed: rWrong || rYield,
+  });
+}
+
+function finalizeRivalKnockbackPicking(
+  rival: RivalEntity,
+  events: GameEvent[],
+  wasPicking: boolean,
+  savedProgress: number,
+  knocked: boolean,
+): RivalEntity {
+  if (knocked) {
+    if (wasPicking || rival.isPicking) {
+      events.push({ type: 'pickCancel', who: 'rival' });
+      return { ...rival, isPicking: false, pickProgress: 0 };
+    }
+    return rival;
+  }
+  if (wasPicking) {
+    return { ...rival, isPicking: true, pickProgress: savedProgress };
+  }
+  return rival;
+}
+
+function finishRivalRivalCollisionFx(
+  s: GameState,
+  rivals: RivalEntity[],
+  indexA: number,
+  indexB: number,
+  events: GameEvent[],
+  detail: CollisionEventDetail,
+): GameState {
+  s.rivals = rivals;
+  s.collisionFx = 600;
+  s.collisionPos = {
+    x: (rivals[indexA].x + rivals[indexB].x) / 2 + 0.5,
+    y: (rivals[indexA].y + rivals[indexB].y) / 2 + 0.5,
+  };
+  s.lastCollisionElapsed = s.elapsed;
+  events.push({ type: 'collision', involvesPlayer: false, ...detail });
+  return s;
+}
+
+/** CPU vs CPU — same wrong-way / yield / knockback / stun rules as player vs CPU. */
+function applyRivalRivalCollision(
+  s: GameState,
+  state: GameState,
+  moverIndex: number,
+  blockerIndex: number,
+  moverAttemptDir: Direction,
+  events: GameEvent[],
+): GameState {
+  const ax0 = state.rivals[moverIndex].x;
+  const ay0 = state.rivals[moverIndex].y;
+  const bx0 = state.rivals[blockerIndex].x;
+  const by0 = state.rivals[blockerIndex].y;
+
+  const aMoved = s.rivals[moverIndex].x !== ax0 || s.rivals[moverIndex].y !== ay0;
+  const bMoved = s.rivals[blockerIndex].x !== bx0 || s.rivals[blockerIndex].y !== by0;
+
+  const aDir = aMoved
+    ? dirBetween(ax0, ay0, s.rivals[moverIndex].x, s.rivals[moverIndex].y)
+    : moverAttemptDir;
+  const bDir = bMoved
+    ? dirBetween(bx0, by0, s.rivals[blockerIndex].x, s.rivals[blockerIndex].y)
+    : null;
+
+  const savedA = {
+    picking: s.rivals[moverIndex].isPicking,
+    progress: s.rivals[moverIndex].pickProgress,
+  };
+  const savedB = {
+    picking: s.rivals[blockerIndex].isPicking,
+    progress: s.rivals[blockerIndex].pickProgress,
+  };
+
+  const rivals = [...s.rivals];
+  let a = { ...rivals[moverIndex], lastMoveDir: aDir ?? rivals[moverIndex].lastMoveDir };
+  let b = { ...rivals[blockerIndex], lastMoveDir: bDir ?? rivals[blockerIndex].lastMoveDir };
+
+  const grid = s.grid;
+  const occupiers = allOccupiers(state);
+  const aAggressor = attemptedIntoCell(ax0, ay0, bx0, by0, aDir);
+  const bAggressor = attemptedIntoCell(bx0, by0, ax0, ay0, bDir);
+  const aPushThrough = isPushThroughActive(s.rivalSkills[moverIndex] ?? createInitialSkills());
+  const bPushThrough = isPushThroughActive(s.rivalSkills[blockerIndex] ?? createInitialSkills());
+  const aSuperSpeed = isSuperSpeedActive(s.rivalSkills[moverIndex] ?? createInitialSkills());
+  const bSuperSpeed = isSuperSpeedActive(s.rivalSkills[blockerIndex] ?? createInitialSkills());
+
+  if (aPushThrough && savedB.picking) {
+    const pushDir = aDir ?? bDir ?? a.facing;
+    const knock = applySimpleKnockback(
+      grid,
+      bx0,
+      by0,
+      null,
+      { x: ax0, y: ay0 },
+      'yield',
+      pushDir,
+      occupiers,
+    );
+    b = {
+      ...b,
+      x: knock.x,
+      y: knock.y,
+      stun: stunForCollisionKnockback(true, true, bSuperSpeed),
+    };
+    const sep = separateIfOverlapping(
+      grid,
+      { x: a.x, y: a.y },
+      { x: b.x, y: b.y },
+      false,
+      true,
+    );
+    a = { ...a, x: sep.player.x, y: sep.player.y };
+    b = {
+      ...b,
+      x: sep.rival.x,
+      y: sep.rival.y,
+      stun: stunForCollisionKnockback(true, true, bSuperSpeed),
+    };
+    b = finalizeRivalKnockbackPicking(b, events, savedB.picking, savedB.progress, true);
+    rivals[moverIndex] = a;
+    rivals[blockerIndex] = b;
+    return finishRivalRivalCollisionFx(s, rivals, moverIndex, blockerIndex, events, {
+      type: 'collision',
+      playerKnockedBack: false,
+      rivalKnockedBack: true,
+      playerWrongWay: false,
+      rivalWrongWay: false,
+      playerPushed: false,
+      rivalPushed: true,
+    });
+  }
+
+  if (bPushThrough && savedA.picking) {
+    const pushDir = bDir ?? aDir ?? b.facing;
+    const knock = applySimpleKnockback(
+      grid,
+      ax0,
+      ay0,
+      null,
+      { x: bx0, y: by0 },
+      'yield',
+      pushDir,
+      occupiers,
+    );
+    a = {
+      ...a,
+      x: knock.x,
+      y: knock.y,
+      stun: stunForCollisionKnockback(true, true, aSuperSpeed),
+    };
+    const sep = separateIfOverlapping(
+      grid,
+      { x: a.x, y: a.y },
+      { x: b.x, y: b.y },
+      true,
+      false,
+    );
+    a = {
+      ...a,
+      x: sep.player.x,
+      y: sep.player.y,
+      stun: stunForCollisionKnockback(true, true, aSuperSpeed),
+    };
+    b = { ...b, x: sep.rival.x, y: sep.rival.y };
+    a = finalizeRivalKnockbackPicking(a, events, savedA.picking, savedA.progress, true);
+    rivals[moverIndex] = a;
+    rivals[blockerIndex] = b;
+    return finishRivalRivalCollisionFx(s, rivals, moverIndex, blockerIndex, events, {
+      type: 'collision',
+      playerKnockedBack: true,
+      rivalKnockedBack: false,
+      playerWrongWay: false,
+      rivalWrongWay: false,
+      playerPushed: true,
+      rivalPushed: false,
+    });
+  }
+
+  if (aPushThrough) {
+    const bKnock = { x: b.x, y: b.y };
+    const pushDir = aDir ?? bDir ?? a.facing;
+    if (pushDir) {
+      const knock = applySimpleKnockback(
+        grid,
+        bx0,
+        by0,
+        null,
+        { x: ax0, y: ay0 },
+        'yield',
+        pushDir,
+        occupiers,
+      );
+      b = { ...b, x: knock.x, y: knock.y };
+    }
+    const sep = separateIfOverlapping(grid, { x: a.x, y: a.y }, { x: b.x, y: b.y }, false, true);
+    a = { ...a, x: sep.player.x, y: sep.player.y, stun: 0 };
+    b = { ...b, x: sep.rival.x, y: sep.rival.y };
+    const bKnocked = b.x !== bKnock.x || b.y !== bKnock.y;
+    b = {
+      ...b,
+      stun: stunForCollisionKnockback(bKnocked, false, bSuperSpeed),
+    };
+    b = finalizeRivalKnockbackPicking(b, events, savedB.picking, savedB.progress, bKnocked);
+    rivals[moverIndex] = a;
+    rivals[blockerIndex] = b;
+    return finishRivalRivalCollisionFx(s, rivals, moverIndex, blockerIndex, events, {
+      type: 'collision',
+      playerKnockedBack: false,
+      rivalKnockedBack: bKnocked,
+      playerWrongWay: false,
+      rivalWrongWay: false,
+      playerPushed: false,
+      rivalPushed: bKnocked,
+    });
+  }
+
+  if (bPushThrough) {
+    const aKnock = { x: a.x, y: a.y };
+    const pushDir = bDir ?? aDir ?? b.facing;
+    if (pushDir) {
+      const knock = applySimpleKnockback(
+        grid,
+        ax0,
+        ay0,
+        null,
+        { x: bx0, y: by0 },
+        'yield',
+        pushDir,
+        occupiers,
+      );
+      a = { ...a, x: knock.x, y: knock.y };
+    }
+    const sep = separateIfOverlapping(grid, { x: a.x, y: a.y }, { x: b.x, y: b.y }, true, false);
+    a = { ...a, x: sep.player.x, y: sep.player.y };
+    b = { ...b, x: sep.rival.x, y: sep.rival.y, stun: 0 };
+    const aKnocked = a.x !== aKnock.x || a.y !== aKnock.y;
+    a = {
+      ...a,
+      stun: stunForCollisionKnockback(aKnocked, false, aSuperSpeed),
+    };
+    a = finalizeRivalKnockbackPicking(a, events, savedA.picking, savedA.progress, aKnocked);
+    rivals[moverIndex] = a;
+    rivals[blockerIndex] = b;
+    return finishRivalRivalCollisionFx(s, rivals, moverIndex, blockerIndex, events, {
+      type: 'collision',
+      playerKnockedBack: aKnocked,
+      rivalKnockedBack: false,
+      playerWrongWay: false,
+      rivalWrongWay: false,
+      playerPushed: aKnocked,
+      rivalPushed: false,
+    });
+  }
+
+  const aWrong = isWrongWay(ax0, ay0, aDir);
+  const bWrong = isWrongWay(bx0, by0, bDir);
+  const aYield = !aWrong && !bWrong && bAggressor && !aAggressor && bDir;
+  const bYield = !aWrong && !bWrong && aAggressor && !bAggressor && aDir;
+
+  const axKnock = a.x;
+  const ayKnock = a.y;
+  const bxKnock = b.x;
+  const byKnock = b.y;
+
+  if (bWrong) {
+    const knock = applySimpleKnockback(
+      grid,
+      bx0,
+      by0,
+      bDir,
+      { x: ax0, y: ay0 },
+      'collision',
+      undefined,
+      occupiers,
+    );
+    b = { ...b, x: knock.x, y: knock.y };
+  } else if (bYield && aDir) {
+    const knock = applySimpleKnockback(
+      grid,
+      bx0,
+      by0,
+      null,
+      { x: ax0, y: ay0 },
+      'yield',
+      aDir,
+      occupiers,
+    );
+    b = { ...b, x: knock.x, y: knock.y };
+  }
+
+  if (aWrong) {
+    const knock = applySimpleKnockback(
+      grid,
+      ax0,
+      ay0,
+      aDir,
+      { x: bx0, y: by0 },
+      'collision',
+      undefined,
+      occupiers,
+    );
+    a = { ...a, x: knock.x, y: knock.y };
+  } else if (aYield && bDir) {
+    const knock = applySimpleKnockback(
+      grid,
+      ax0,
+      ay0,
+      null,
+      { x: bx0, y: by0 },
+      'yield',
+      bDir,
+      occupiers,
+    );
+    a = { ...a, x: knock.x, y: knock.y };
+  }
+
+  const sep = separateIfOverlapping(
+    grid,
+    { x: a.x, y: a.y },
+    { x: b.x, y: b.y },
+    aWrong,
+    bWrong,
+  );
+  a = { ...a, x: sep.player.x, y: sep.player.y };
+  b = { ...b, x: sep.rival.x, y: sep.rival.y };
+
+  const aKnocked = a.x !== axKnock || a.y !== ayKnock;
+  const bKnocked = b.x !== bxKnock || b.y !== byKnock;
+
+  a = {
+    ...a,
+    stun: stunForCollisionKnockback(aKnocked, aWrong, aSuperSpeed),
+  };
+  b = {
+    ...b,
+    stun: stunForCollisionKnockback(bKnocked, bWrong, bSuperSpeed),
+  };
+  a = finalizeRivalKnockbackPicking(a, events, savedA.picking, savedA.progress, aKnocked);
+  b = finalizeRivalKnockbackPicking(b, events, savedB.picking, savedB.progress, bKnocked);
+
+  rivals[moverIndex] = a;
+  rivals[blockerIndex] = b;
+
+  return finishRivalRivalCollisionFx(s, rivals, moverIndex, blockerIndex, events, {
+    type: 'collision',
+    playerKnockedBack: aWrong,
+    rivalKnockedBack: bWrong,
+    playerWrongWay: aWrong,
+    rivalWrongWay: bWrong,
+    playerPushed: aWrong || bYield,
+    rivalPushed: bWrong || aYield,
   });
 }
 
@@ -916,19 +1339,33 @@ export function step(state: GameState, input: Input, dtMs: number): StepResult {
   }
 
   const rivals = [...s.rivals];
+  const rivalRivalCollisions: { mover: number; blocker: number; dir: Direction }[] = [];
   let rivalStepIterations = 0;
   for (let i = 0; i < rivals.length; i++) {
     rivalStepIterations++;
     if (rivalStepIterations > MAX_LOOP_ITERATIONS_PER_FRAME) break;
+    const stepState = { ...s, rivals: [...rivals] };
     const rivalResult =
       s.phase === 'tutorial' && !s.tutorialRivalActive && !s.tutorialRivalForcePick
-        ? { rival: rivals[i], collision: false, attemptDir: null as Direction | null }
-        : stepOneRival(s, rivals[i], i, dtMs, events);
+        ? {
+            rival: rivals[i],
+            collision: false,
+            attemptDir: null as Direction | null,
+            rivalRivalCollision: null,
+          }
+        : stepOneRival(stepState, rivals[i], i, dtMs, events);
     rivals[i] = rivalResult.rival;
     if (rivalResult.collision) {
       collision = true;
       collisionRivalIndex = i;
       rivalAttemptDir = rivalResult.attemptDir;
+    }
+    if (rivalResult.rivalRivalCollision && rivalResult.attemptDir) {
+      rivalRivalCollisions.push({
+        mover: i,
+        blocker: rivalResult.rivalRivalCollision.blockerIndex,
+        dir: rivalResult.attemptDir,
+      });
     }
   }
   s = { ...s, rivals };
@@ -938,6 +1375,13 @@ export function step(state: GameState, input: Input, dtMs: number): StepResult {
       playerAttemptDir,
       rivalAttemptDir,
     });
+  }
+
+  let rivalRivalCollisionIterations = 0;
+  for (const col of rivalRivalCollisions) {
+    rivalRivalCollisionIterations++;
+    if (rivalRivalCollisionIterations > MAX_LOOP_ITERATIONS_PER_FRAME) break;
+    s = applyRivalRivalCollision(s, state, col.mover, col.blocker, col.dir, events);
   }
 
   // Safety: never allow player and a CPU on the same tile
@@ -959,6 +1403,8 @@ export function step(state: GameState, input: Input, dtMs: number): StepResult {
     s = { ...s, rivals: nextRivals };
   }
 
+  s = resolveRivalOverlaps(s);
+
   if (s.phase === 'playing' && s.currentTarget >= PICK_COUNT) {
     if (isGoalCell(s.grid, s.player.x, s.player.y)) {
       events.push({ type: 'win' });
@@ -979,33 +1425,33 @@ function stepOneRival(
   rivalIndex: number,
   dtMs: number,
   events: GameEvent[],
-): { rival: RivalEntity; collision: boolean; attemptDir: Direction | null } {
+): RivalStepResult {
   let r = { ...rival };
   let collision = false;
   let attemptDir: Direction | null = null;
   const cpu = getDifficultyConfig(s.difficulty);
 
   if (s.tutorialRivalBlock) {
-    return { rival: r, collision, attemptDir };
+    return { rival: r, collision, attemptDir, rivalRivalCollision: null };
   }
 
   if (s.tutorialRivalForcePick) {
     if (r.stun > 0) {
       r.stun = Math.max(0, r.stun - dtMs);
       if (r.stun === 0) r.jamStun = false;
-      return { rival: r, collision, attemptDir };
+      return { rival: r, collision, attemptDir, rivalRivalCollision: null };
     }
     if (r.isPicking) {
       r.pickProgress = Math.min(0.95, r.pickProgress + dtMs / cpu.pickMs);
       events.push({ type: 'pickProgress', who: 'rival', progress: r.pickProgress });
     }
-    return { rival: r, collision, attemptDir };
+    return { rival: r, collision, attemptDir, rivalRivalCollision: null };
   }
 
   if (r.stun > 0) {
     r.stun = Math.max(0, r.stun - dtMs);
     if (r.stun === 0) r.jamStun = false;
-    return { rival: r, collision, attemptDir };
+    return { rival: r, collision, attemptDir, rivalRivalCollision: null };
   }
 
   const rt = r.targets[r.currentTarget];
@@ -1039,7 +1485,7 @@ function stepOneRival(
         if (r.pickWaitTimer <= 0) r.pickWaitTimer = cpu.pickDelayMs;
         r.pickWaitTimer -= dtMs;
         if (r.pickWaitTimer > 0) {
-          return { rival: r, collision, attemptDir };
+          return { rival: r, collision, attemptDir, rivalRivalCollision: null };
         }
       }
       r.pickWaitTimer = 0;
@@ -1053,12 +1499,12 @@ function stepOneRival(
     events.push({ type: 'pickCancel', who: 'rival' });
   }
 
-  if (r.isPicking) return { rival: r, collision, attemptDir };
+  if (r.isPicking) return { rival: r, collision, attemptDir, rivalRivalCollision: null };
 
   // Tutorial steps 4–5: simple lane patrol for collision practice
   if (s.phase === 'tutorial' && s.tutorialRivalActive) {
     r.moveTimer += dtMs;
-    if (r.moveTimer < cpu.stepMs) return { rival: r, collision, attemptDir };
+    if (r.moveTimer < cpu.stepMs) return { rival: r, collision, attemptDir, rivalRivalCollision: null };
     r.moveTimer -= cpu.stepMs;
 
     const moveDir = s.tutorialRivalWrongWay
@@ -1083,29 +1529,29 @@ function stepOneRival(
         events.push({ type: 'move', who: 'rival', fromX, fromY, dir: moveDir });
       }
     }
-    return { rival: r, collision, attemptDir };
+    return { rival: r, collision, attemptDir, rivalRivalCollision: null };
   }
 
   if (r.currentTarget >= PICK_COUNT) {
     if (isGoalCell(s.grid, r.x, r.y)) {
       r.reachedGoal = true;
-      return { rival: r, collision, attemptDir };
+      return { rival: r, collision, attemptDir, rivalRivalCollision: null };
     }
   }
 
   r.moveTimer += dtMs;
-  if (r.moveTimer < cpu.stepMs) return { rival: r, collision, attemptDir };
+  if (r.moveTimer < cpu.stepMs) return { rival: r, collision, attemptDir, rivalRivalCollision: null };
   r.moveTimer -= cpu.stepMs;
 
   if (cpu.hesitateChance > 0 && Math.random() < cpu.hesitateChance) {
-    return { rival: r, collision, attemptDir };
+    return { rival: r, collision, attemptDir, rivalRivalCollision: null };
   }
 
   if (r.currentTarget < PICK_COUNT) {
     const t = r.targets[r.currentTarget];
     if (!t || t.done) {
       r.currentTarget++;
-      return { rival: r, collision, attemptDir };
+      return { rival: r, collision, attemptDir, rivalRivalCollision: null };
     }
   }
 

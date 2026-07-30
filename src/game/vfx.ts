@@ -53,6 +53,7 @@ export interface VfxState {
   trailMarks: TrailMark[];
   skillBurst: SkillBurstState | null;
   shakeMs: number;
+  shakeDuration: number;
   shakeMag: number;
   ambientAcc: number;
 }
@@ -65,6 +66,7 @@ export function createVfx(): VfxState {
     trailMarks: [],
     skillBurst: null,
     shakeMs: 0,
+    shakeDuration: 0,
     shakeMag: 0,
     ambientAcc: 0,
   };
@@ -77,6 +79,7 @@ export function resetVfx(vfx: VfxState) {
   vfx.trailMarks = [];
   vfx.skillBurst = null;
   vfx.shakeMs = 0;
+  vfx.shakeDuration = 0;
   vfx.shakeMag = 0;
   vfx.ambientAcc = 0;
 }
@@ -131,8 +134,9 @@ export function triggerSkillActivate(
 }
 
 export function triggerCollisionShake(vfx: VfxState, strong = false) {
-  vfx.shakeMs = strong ? 420 : 320;
-  vfx.shakeMag = strong ? 5.5 : 3.5;
+  vfx.shakeDuration = strong ? 200 : 150;
+  vfx.shakeMs = vfx.shakeDuration;
+  vfx.shakeMag = strong ? 2.2 : 1.4;
 }
 
 export function triggerPickComplete(
@@ -279,8 +283,8 @@ export function updateVfx(vfx: VfxState, dtMs: number, playing: boolean) {
 }
 
 export function getShakeOffset(vfx: VfxState): { x: number; y: number } {
-  if (vfx.shakeMs <= 0) return { x: 0, y: 0 };
-  const t = vfx.shakeMs / 420;
+  if (vfx.shakeMs <= 0 || vfx.shakeDuration <= 0) return { x: 0, y: 0 };
+  const t = vfx.shakeMs / vfx.shakeDuration;
   const mag = vfx.shakeMag * t * t;
   return {
     x: (Math.random() - 0.5) * mag * 2,

@@ -318,9 +318,14 @@ export function findYieldCell(
 }
 
 /** Stun (wobble stars) only for parties displaced by collision resolution. */
-export function stunForCollisionKnockback(knockedBack: boolean, wrongWay: boolean): number {
+export function stunForCollisionKnockback(
+  knockedBack: boolean,
+  wrongWay: boolean,
+  superSpeedActive = false,
+): number {
   if (!knockedBack) return 0;
-  return wrongWay ? COLLISION_STUN_LOSER_MS : COLLISION_STUN_WINNER_MS;
+  const base = wrongWay ? COLLISION_STUN_LOSER_MS : COLLISION_STUN_WINNER_MS;
+  return superSpeedActive ? Math.floor(base / 2) : base;
 }
 
 /** Draw flow arrow on floor tile (called from renderer). */
@@ -335,9 +340,10 @@ export function drawFlowArrow(
   if (!flow) return;
   const cx = x * tileSize + tileSize / 2;
   const cy = y * tileSize + tileSize / 2;
-  const color = wrongWayFlash ? 'rgba(255,90,90,0.75)' : 'rgba(255,255,255,0.22)';
+  const color = wrongWayFlash ? 'rgba(255,90,90,0.85)' : 'rgba(255,255,255,0.42)';
   ctx.save();
-  ctx.fillStyle = color;
+  // Soft dark backing so arrows read clearly on the darker floor
+  ctx.fillStyle = wrongWayFlash ? 'rgba(80,20,20,0.35)' : 'rgba(0,0,0,0.28)';
   ctx.translate(cx, cy);
   const rot: Record<Direction, number> = {
     up: -Math.PI / 2,
@@ -346,9 +352,16 @@ export function drawFlowArrow(
     right: 0,
   };
   ctx.rotate(rot[flow]);
-  // ▼ 三角矢印
   const tip = 8;
   const base = 5.5;
+  ctx.beginPath();
+  ctx.moveTo(tip + 0.5, 0);
+  ctx.lineTo(-tip * 0.55, -base - 0.5);
+  ctx.lineTo(-tip * 0.55, base + 0.5);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle = color;
   ctx.beginPath();
   ctx.moveTo(tip, 0);
   ctx.lineTo(-tip * 0.55, -base);
@@ -366,16 +379,16 @@ export function drawMainAisleCenterLine(ctx: CanvasRenderingContext2D, tileSize:
   ctx.save();
 
   // Dark road base
-  ctx.fillStyle = 'rgba(30,28,40,0.55)';
+  ctx.fillStyle = 'rgba(20,18,28,0.6)';
   ctx.fillRect(x0, y - 4, x1 - x0, 8);
 
   // Edge rails
-  ctx.fillStyle = 'rgba(255,228,107,0.35)';
+  ctx.fillStyle = 'rgba(255,228,107,0.5)';
   ctx.fillRect(x0, y - 3.5, x1 - x0, 1);
   ctx.fillRect(x0, y + 2.5, x1 - x0, 1);
 
   // Thick dash blocks
-  ctx.fillStyle = 'rgba(255,228,107,0.8)';
+  ctx.fillStyle = 'rgba(255,228,107,0.92)';
   for (let x = x0 + 4; x < x1 - 4; x += 16) {
     ctx.fillRect(x, y - 1.5, 10, 3);
   }

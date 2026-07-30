@@ -9,6 +9,7 @@ import {
   drawCollisionFxAt,
   drawPlayerMarkerAt,
   eraseFloorCell,
+  applyRetroColorFilter,
 } from './game/renderer';
 import { sfx, setMuted, unlockAudio, playSkillSfx } from './game/sound';
 import { useKeyboardInput } from './hooks/useKeyboardInput';
@@ -268,7 +269,9 @@ export default function App() {
           if (t) triggerPickComplete(vfx, t.x, t.y, 'rival', ev.index);
         } else if (ev.type === 'collision') {
           sfx.collision();
-          triggerCollisionShake(vfx);
+          if (ev.involvesPlayer) {
+            triggerCollisionShake(vfx, ev.playerWrongWay || ev.rivalWrongWay);
+          }
         } else if (ev.type === 'skillUsed') {
           playSkillSfx(ev.skill);
           triggerSkillActivate(
@@ -362,6 +365,7 @@ export default function App() {
           );
         }
         ctx.restore();
+        applyRetroColorFilter(ctx, canvas.width, canvas.height);
       }
     }
   });
@@ -375,6 +379,7 @@ export default function App() {
         blinkRef.current += 0.016;
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         render(ctx, gameRef.current, { blink: blinkRef.current });
+        applyRetroColorFilter(ctx, canvas.width, canvas.height);
       }
     }
   });
