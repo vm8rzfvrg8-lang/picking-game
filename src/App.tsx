@@ -7,6 +7,7 @@ import {
   drawCharacterAt,
   drawPickGaugeAt,
   drawCollisionFxAt,
+  drawPlayerMarkerAt,
   eraseFloorCell,
 } from './game/renderer';
 import { sfx, setMuted, unlockAudio, playSkillSfx } from './game/sound';
@@ -541,6 +542,8 @@ function drawSmoothEntities(
   if (state.isPicking) {
     drawPickGaugeAt(ctx, playerVisual.x, playerVisual.y, state.pickProgress, 'player');
   }
+
+  drawPlayerMarkerAt(ctx, playerVisual.x, playerVisual.y, blink);
 
   if (state.collisionFx > 0 && state.collisionPos) {
     drawCollisionFxAt(ctx, state.collisionPos.x, state.collisionPos.y, state.collisionFx);

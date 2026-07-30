@@ -37,6 +37,59 @@ export function drawCharacterAt(
   drawCharacter(ctx, fx, fy, facing, blink, stunned, who, opts);
 }
 
+/** Yellow ▼ marker above the player — drawn last so it stays visible over CPU overlap. */
+export function drawPlayerMarkerAt(
+  ctx: CanvasRenderingContext2D,
+  fx: number,
+  fy: number,
+  blink: number,
+) {
+  const cx = fx * TILE + TILE / 2;
+  const cy = fy * TILE + TILE / 2;
+  const bob = Math.sin(blink * Math.PI * 2 * 1.6) * 1.8;
+  const baseY = cy - 20 + bob;
+  const tipY = baseY + 9;
+
+  ctx.save();
+  ctx.globalCompositeOperation = 'source-over';
+
+  // Soft glow halo for contrast on busy tiles
+  ctx.globalCompositeOperation = 'lighter';
+  const glow = ctx.createRadialGradient(cx, baseY + 4, 1, cx, baseY + 4, 14);
+  glow.addColorStop(0, 'rgba(255,230,80,0.85)');
+  glow.addColorStop(0.55, 'rgba(255,200,40,0.35)');
+  glow.addColorStop(1, 'rgba(255,200,40,0)');
+  ctx.fillStyle = glow;
+  ctx.beginPath();
+  ctx.arc(cx, baseY + 4, 14, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.globalCompositeOperation = 'source-over';
+  // Outline
+  ctx.fillStyle = '#1a1200';
+  ctx.beginPath();
+  ctx.moveTo(cx, tipY + 1);
+  ctx.lineTo(cx - 8, baseY - 1);
+  ctx.lineTo(cx + 8, baseY - 1);
+  ctx.closePath();
+  ctx.fill();
+
+  // Main ▼ (points down toward player head)
+  ctx.fillStyle = '#ffd54f';
+  ctx.beginPath();
+  ctx.moveTo(cx, tipY);
+  ctx.lineTo(cx - 7, baseY);
+  ctx.lineTo(cx + 7, baseY);
+  ctx.closePath();
+  ctx.fill();
+
+  // Highlight
+  ctx.fillStyle = 'rgba(255,255,255,0.65)';
+  ctx.fillRect(Math.round(cx - 1), Math.round(baseY + 1), 2, 3);
+
+  ctx.restore();
+}
+
 export function drawPickGaugeAt(
   ctx: CanvasRenderingContext2D,
   fx: number,

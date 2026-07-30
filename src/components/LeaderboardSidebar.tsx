@@ -110,13 +110,13 @@ export function LeaderboardSidebar({ game }: Props) {
 
   return (
     <aside
-      className="game-ranking-sidebar flex shrink-0 flex-col overflow-hidden rounded-md border border-[#2a3a5d]/80 bg-[#0c1530]/92 backdrop-blur-sm"
+      className="game-ranking-sidebar flex min-h-0 flex-col overflow-hidden rounded-md border border-[#2a3a5d]/80 bg-[#0c1530]/92 backdrop-blur-sm"
       aria-label="スコアボード"
     >
-      <div className="shrink-0 border-b border-[#1a2a4d] px-1.5 py-0.5">
+      <div className="game-ranking-header shrink-0 border-b border-[#1a2a4d] px-1.5 py-0.5">
         <p className="text-[7px] font-bold tracking-wider text-[#9fb0d8]">RANKING</p>
       </div>
-      <ol className="flex flex-col gap-px overflow-y-auto p-0.5">
+      <ol className="game-ranking-list flex min-h-0 flex-1 flex-col gap-px overflow-y-auto p-0.5">
         {ranked.map((entry, index) => (
           <LeaderboardRow key={entry.id} rank={index + 1} entry={entry} />
         ))}
@@ -129,30 +129,41 @@ function LeaderboardRow({ rank, entry }: { rank: number; entry: LeaderboardEntry
   const { picked, total, accent, Icon, name, badge, goalStatus, isPlayer } = entry;
   const statusLabel =
     goalStatus === 'at-goal' ? 'G' : goalStatus === 'to-goal' ? '→' : null;
+  const rowAccent = isPlayer ? '#ffe082' : accent;
 
   return (
     <li
-      className={`leaderboard-row rounded border px-1 py-0.5 ${
-        isPlayer ? 'border-[#3bd4ff]/35 bg-[#3bd4ff]/8' : 'border-[#2a3a5d]/50 bg-[#121a33]/80'
-      }`}
+      className={
+        isPlayer
+          ? 'leaderboard-row leaderboard-row--player rounded px-1 py-0.5'
+          : 'leaderboard-row rounded border border-[#2a3a5d]/50 bg-[#121a33]/80 px-1 py-0.5'
+      }
+      aria-current={isPlayer ? 'true' : undefined}
     >
-      <div className="flex items-center gap-0.5 leading-none">
+      <div className="leaderboard-row-main flex items-center gap-0.5 leading-none">
         <span
-          className="w-2.5 shrink-0 text-[7px] font-black tabular-nums text-[#5a6a8d]"
+          className={`leaderboard-rank w-2.5 shrink-0 text-[7px] font-black tabular-nums ${
+            isPlayer ? 'text-[#ffd54f]' : 'text-[#5a6a8d]'
+          }`}
           style={{ fontFamily: '"Press Start 2P", monospace' }}
         >
           {rank}
         </span>
-        <Icon className="h-2.5 w-2.5 shrink-0" style={{ color: accent }} />
+        <Icon className="leaderboard-icon h-2.5 w-2.5 shrink-0" style={{ color: rowAccent }} />
         <span
-          className="min-w-0 flex-1 truncate text-[8px] font-bold"
-          style={{ color: accent }}
+          className={`leaderboard-name min-w-0 flex-1 truncate text-[8px] ${isPlayer ? 'font-black' : 'font-bold'}`}
+          style={{ color: rowAccent }}
         >
           {name}
         </span>
+        {isPlayer && (
+          <span className="leaderboard-you-badge shrink-0 rounded px-0.5 text-[6px] font-black leading-none">
+            YOU
+          </span>
+        )}
         {badge && (
           <span
-            className="shrink-0 rounded px-0.5 text-[6px] font-bold leading-none"
+            className="leaderboard-cpu-badge shrink-0 rounded px-0.5 text-[6px] font-bold leading-none"
             style={{ color: accent, backgroundColor: entry.accentMuted }}
           >
             {badge}
@@ -160,20 +171,20 @@ function LeaderboardRow({ rank, entry }: { rank: number; entry: LeaderboardEntry
         )}
         {statusLabel && (
           <span
-            className="shrink-0 text-[7px] font-black leading-none"
-            style={{ color: goalStatus === 'at-goal' ? '#ffe46b' : accent }}
+            className="leaderboard-status shrink-0 text-[7px] font-black leading-none"
+            style={{ color: goalStatus === 'at-goal' ? '#ffe46b' : rowAccent }}
           >
             {statusLabel}
           </span>
         )}
         <span
-          className="shrink-0 text-[7px] font-black tabular-nums leading-none"
-          style={{ fontFamily: '"Press Start 2P", monospace', color: accent }}
+          className="leaderboard-score shrink-0 text-[7px] font-black tabular-nums leading-none"
+          style={{ fontFamily: '"Press Start 2P", monospace', color: rowAccent }}
         >
           {picked}/{total}
         </span>
       </div>
-      <div className="mt-0.5 flex items-center gap-px pl-3">
+      <div className="leaderboard-progress mt-0.5 flex items-center gap-px pl-3">
         {Array.from({ length: total }).map((_, i) => (
           <span
             key={i}
@@ -182,9 +193,9 @@ function LeaderboardRow({ rank, entry }: { rank: number; entry: LeaderboardEntry
             }`}
             style={
               i < picked
-                ? { backgroundColor: accent }
+                ? { backgroundColor: isPlayer ? '#ffd54f' : accent }
                 : i === picked
-                  ? { backgroundColor: `${accent}99` }
+                  ? { backgroundColor: isPlayer ? 'rgba(255,213,79,0.65)' : `${accent}99` }
                   : undefined
             }
           />
