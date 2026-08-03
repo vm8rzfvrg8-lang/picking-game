@@ -66,7 +66,7 @@ export function SkillButton({ selectedSkill, skills, onUse, docked = false }: Pr
       ? 'READY!'
       : `${gaugePercent}% (${Math.ceil((SKILL_GAUGE_FILL_MS - skills.gaugeMs) / 1000)}s)`;
 
-  const btnSize = docked ? 'h-12 w-12 sm:h-14 sm:w-14' : 'h-[4.5rem] w-[4.5rem] sm:h-20 sm:w-20';
+  const btnSize = docked ? 'h-14 w-14 sm:h-16 sm:w-16' : 'h-[4.5rem] w-[4.5rem] sm:h-20 sm:w-20';
   const iconSize = docked ? 'h-5 w-5 sm:h-5 sm:w-5' : 'h-7 w-7 sm:h-8 sm:w-8';
   const labelSize = docked ? 'text-[6px] sm:text-[7px]' : 'text-[8px] sm:text-[9px]';
 
@@ -81,12 +81,17 @@ export function SkillButton({ selectedSkill, skills, onUse, docked = false }: Pr
         }}
         disabled={disabled}
         aria-label={`スキル：${def.label}（ゲージ ${gaugePercent}%）`}
-        className={`relative flex ${btnSize} flex-col items-center justify-center overflow-hidden rounded-lg border-2 select-none transition ${
+        className={`relative flex ${btnSize} flex-col items-center justify-center overflow-hidden rounded-full border-2 select-none transition ${
           ready
-            ? `${theme.ready} bg-[#0c1530] active:scale-95 hover:bg-[#122040]`
-            : 'cursor-not-allowed border-[#2a3a5d] bg-[#141c30] text-[#4a5a7d]'
+            ? `${theme.ready} bg-black/30 active:scale-95`
+            : 'cursor-not-allowed border-white/15 bg-black/20 text-white/45'
         } ${active ? 'animate-pulse' : ''}`}
         style={{ touchAction: 'manipulation' }}
+        onClick={(e) => {
+          e.preventDefault();
+          if (disabled) return;
+          onUse();
+        }}
         onContextMenu={(e) => e.preventDefault()}
       >
         {!active && (

@@ -4,7 +4,83 @@ import { GRID_H, GRID_W, PICK_COUNT, PickTarget, Tile } from './constants';
 export const MAIN_AISLE_Y_TOP = 6;
 export const MAIN_AISLE_Y_BOTTOM = 7;
 
-/** Sub aisle column x-coordinates (alternating ↑↓). Includes right-edge lane x=16. */
+/** Left edge of the start hall (inclusive). Wall is at x=0. */
+export const START_ZONE_X_MIN = 1;
+/** Right edge of the start hall (inclusive) — 3-column free-movement zone. */
+export const START_ZONE_X_MAX = 3;
+/** @deprecated Use START_ZONE_X_MIN */
+export const START_CORRIDOR_X = START_ZONE_X_MIN;
+
+export function isStartCorridorX(x: number): boolean {
+  return x >= START_ZONE_X_MIN && x <= START_ZONE_X_MAX;
+}
+
+/** First sub-aisle after the leftmost shelf pair (design: START hall | shelf | shelf | aisle). */
+export const FIRST_SUB_AISLE_X = 6;
+
+/** Sub-aisle columns repeat every 3 tiles (x=4,7,10,...). */
+export function isSubAisleX(x: number): boolean {
+  return x >= FIRST_SUB_AISLE_X && x < GRID_W - 1 && (x - FIRST_SUB_AISLE_X) % 3 === 0;
+}
+
+/** Zero-based index of a sub-aisle column (x=4→0, x=7→1, ...). */
+export function subAisleIndex(x: number): number {
+  return Math.floor((x - FIRST_SUB_AISLE_X) / 3);
+}
+
+/** Sub-aisle flow: even index ▼ down, odd index ▲ up (snake path). */
+export function subAisleFlowDirection(x: number): 'up' | 'down' {
+  return subAisleIndex(x) % 2 === 0 ? 'down' : 'up';
+}
+
+export function shelfLocationKey(x: number, y: number): string {
+  return `${x},${y}`;
+}
+
+const UPPER_SHELF_YS = [2, 3, 4, 5] as const;
+const LOWER_SHELF_YS = [8, 9, 10, 11] as const;
+const LEFTMOST_SHELF_X = 4;
+
+/** Assign 1-based location numbers along the warehouse snake path. */
+export function buildShelfLocationMap(
+  shelfCells: { x: number; y: number }[],
+): Record<string, number> {
+  const map: Record<string, number> = {};
+  let num = 1;
+
+  const assign = (x: number, y: number) => {
+    const key = shelfLocationKey(x, y);
+    if (map[key] != null) return;
+    map[key] = num++;
+  };
+
+  // Leftmost column before the first sub-aisle (design: 1–8 bottom→top).
+  for (const y of [...LOWER_SHELF_YS].reverse()) assign(LEFTMOST_SHELF_X, y);
+  for (const y of [...UPPER_SHELF_YS].reverse()) assign(LEFTMOST_SHELF_X, y);
+
+  for (let aisleX = FIRST_SUB_AISLE_X; aisleX < GRID_W - 1; aisleX += 3) {
+    const down = subAisleFlowDirection(aisleX) === 'down';
+    const leftCol = aisleX - 1;
+    const rightCol = aisleX + 1;
+    const yOrder = down
+      ? [...UPPER_SHELF_YS, ...LOWER_SHELF_YS]
+      : [...LOWER_SHELF_YS].reverse().concat([...UPPER_SHELF_YS].reverse());
+
+    for (const y of yOrder) {
+      if (leftCol > START_ZONE_X_MAX) assign(leftCol, y);
+      if (rightCol < GRID_W - 1) assign(rightCol, y);
+    }
+  }
+
+  // Safety: any shelf tile missed by the snake walk gets trailing numbers.
+  for (const s of shelfCells) {
+    assign(s.x, s.y);
+  }
+
+  return map;
+}
+
+/** @deprecated Use isSubAisleX — kept for reference only. */
 export const SUB_AISLE_XS = [1, 4, 7, 10, 13, 16] as const;
 
 /** Wall-embedded goal cells. */
@@ -28,41 +104,39 @@ function isMainAisleRow(y: number): boolean {
   return y === MAIN_AISLE_Y_TOP || y === MAIN_AISLE_Y_BOTTOM;
 }
 
-// Library layout: vertical bookshelves with 2-row main aisle and alternating sub aisles.
+// Library layout: START hall (x=1..3) then repeating [shelf | shelf | sub-aisle].
 export function generateLibrary(_rng: Rng): { grid: Tile[][]; shelfCells: { x: number; y: number }[] } {
   const grid: Tile[][] = [];
+  const shelfYStart = 2;
+  const shelfYEnd = GRID_H - 3;
+  const shelfCells: { x: number; y: number }[] = [];
+
   for (let y = 0; y < GRID_H; y++) {
     const row: Tile[] = [];
     for (let x = 0; x < GRID_W; x++) {
       const border = x === 0 || y === 0 || x === GRID_W - 1 || y === GRID_H - 1;
-      row.push(border ? 'W' : 'F');
+      if (border) {
+        row.push('W');
+        continue;
+      }
+      if (isStartCorridorX(x)) {
+        row.push('F');
+        continue;
+      }
+      if (isMainAisleRow(y) || isSubAisleX(x)) {
+        row.push('F');
+        continue;
+      }
+      if (y >= shelfYStart && y <= shelfYEnd) {
+        row.push('S');
+        shelfCells.push({ x, y });
+        continue;
+      }
+      row.push('F');
     }
     grid.push(row);
   }
 
-  const shelfYStart = 2;
-  const shelfYEnd = GRID_H - 3;
-
-  // 2-wide shelf columns; sub aisles at x=1,4,7,10,13 between groups
-  const shelfGroups = [
-    [2, 3],
-    [5, 6],
-    [8, 9],
-    [11, 12],
-    [14, 15],
-  ];
-  const shelfCells: { x: number; y: number }[] = [];
-  for (const [x1, x2] of shelfGroups) {
-    for (let x = x1; x <= x2; x++) {
-      for (let y = shelfYStart; y <= shelfYEnd; y++) {
-        if (isMainAisleRow(y)) continue;
-        grid[y][x] = 'S';
-        shelfCells.push({ x, y });
-      }
-    }
-  }
-
-  // Wall-embedded goals on both main lanes
   for (const g of GOAL_CELLS) {
     grid[g.y][g.x] = 'G';
   }
@@ -153,81 +227,51 @@ function isWrongWayAt(x: number, y: number, moveDir: string): boolean {
 }
 
 function flowAt(x: number, y: number): string | null {
+  if (isStartCorridorX(x)) return null;
   if (y === MAIN_AISLE_Y_TOP) return 'right';
   if (y === MAIN_AISLE_Y_BOTTOM) return 'left';
-  const idx = (SUB_AISLE_XS as readonly number[]).indexOf(x);
-  if (idx >= 0 && !isMainAisleRow(y)) {
-    return idx % 2 === 0 ? 'up' : 'down';
+  if (isSubAisleX(x) && !isMainAisleRow(y)) {
+    return subAisleFlowDirection(x);
   }
   return null;
 }
 
+/** Random shelf subset sorted by ascending location number (warehouse pick list). */
 export function assignTargets(
-  grid: Tile[][],
   shelfCells: { x: number; y: number }[],
-  playerSpawn: { x: number; y: number },
+  shelfLocations: Record<string, number>,
   rng: Rng,
 ): PickTarget[] {
-  const reachableShelves = shelfCells.filter((s) => {
-    if (grid[s.y][s.x] !== 'S') return false;
-    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-      if (isWalkable(grid, s.x + dx, s.y + dy)) return true;
-    }
-    return false;
-  });
-  for (let i = reachableShelves.length - 1; i > 0; i--) {
+  const candidates = shelfCells
+    .map((s) => ({
+      x: s.x,
+      y: s.y,
+      locationNumber: shelfLocations[shelfLocationKey(s.x, s.y)] ?? Number.MAX_SAFE_INTEGER,
+    }))
+    .filter((s) => s.locationNumber < Number.MAX_SAFE_INTEGER);
+
+  for (let i = candidates.length - 1; i > 0; i--) {
     const j = Math.floor(rng() * (i + 1));
-    [reachableShelves[i], reachableShelves[j]] = [reachableShelves[j], reachableShelves[i]];
+    [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
   }
 
-  const chosen: PickTarget[] = [];
-  const used = new Set<string>();
-  let prev = playerSpawn;
+  const chosen = candidates.slice(0, PICK_COUNT);
+  chosen.sort((a, b) => a.locationNumber - b.locationNumber);
 
-  const tryReachable = (shelf: { x: number; y: number }): boolean => {
-    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-      const ax = shelf.x + dx;
-      const ay = shelf.y + dy;
-      if (!isWalkable(grid, ax, ay)) continue;
-      const dist = bfsDistances(grid, prev.x, prev.y);
-      if (dist[ay][ax] >= 0) return true;
-    }
-    return false;
-  };
-
-  for (const s of reachableShelves) {
-    if (chosen.length >= PICK_COUNT) break;
-    const k = `${s.x},${s.y}`;
-    if (used.has(k)) continue;
-    if (chosen.length > 0 && !tryReachable(s)) continue;
-    used.add(k);
-    chosen.push({ index: chosen.length, x: s.x, y: s.y, done: false });
-    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-      if (isWalkable(grid, s.x + dx, s.y + dy)) {
-        prev = { x: s.x + dx, y: s.y + dy };
-        break;
-      }
-    }
-  }
-
-  if (chosen.length < PICK_COUNT) {
-    for (const s of reachableShelves) {
-      if (chosen.length >= PICK_COUNT) break;
-      const k = `${s.x},${s.y}`;
-      if (used.has(k)) continue;
-      used.add(k);
-      chosen.push({ index: chosen.length, x: s.x, y: s.y, done: false });
-    }
-  }
-
-  return chosen;
+  return chosen.map((s, index) => ({
+    index,
+    locationNumber: s.locationNumber,
+    x: s.x,
+    y: s.y,
+    done: false,
+  }));
 }
 
 export function findWalkableNear(
   grid: Tile[][],
   corner: 'tl' | 'bl' | 'tr' | 'br',
 ): { x: number; y: number } {
-  const cx = corner.includes('l') ? 1 : GRID_W - 2;
+  const cx = corner.includes('l') ? START_ZONE_X_MIN : GRID_W - 2;
   const cy = corner.includes('t') ? 1 : GRID_H - 2;
   for (let r = 0; r < 6; r++) {
     for (let dy = -r; dy <= r; dy++) {
@@ -238,48 +282,69 @@ export function findWalkableNear(
       }
     }
   }
-  return { x: 1, y: 1 };
+  return { x: START_ZONE_X_MIN, y: 1 };
 }
 
-/** Spread CPU spawn points away from the player start. */
+/** All walkable cells inside the start hall. */
+export function getStartCorridorCells(grid: Tile[][]): { x: number; y: number }[] {
+  const cells: { x: number; y: number }[] = [];
+  for (let x = START_ZONE_X_MIN; x <= START_ZONE_X_MAX; x++) {
+    for (let y = 1; y < GRID_H - 1; y++) {
+      if (isWalkable(grid, x, y)) cells.push({ x, y });
+    }
+  }
+  return cells;
+}
+
+/** Player spawn — front-left of start hall on upper main aisle (rush-right layout). */
+export function findPlayerSpawn(grid: Tile[][]): { x: number; y: number } {
+  const preferred = [
+    { x: START_ZONE_X_MIN, y: MAIN_AISLE_Y_TOP },
+    { x: START_ZONE_X_MIN + 1, y: MAIN_AISLE_Y_TOP },
+    { x: START_ZONE_X_MIN, y: MAIN_AISLE_Y_BOTTOM },
+  ];
+  for (const p of preferred) {
+    if (isWalkable(grid, p.x, p.y)) return p;
+  }
+  const cells = getStartCorridorCells(grid);
+  return cells[0] ?? { x: START_ZONE_X_MIN, y: MAIN_AISLE_Y_TOP };
+}
+
+/** CPU spawns — fill start hall beside player, ready to surge right together. */
 export function findCpuSpawnPoints(
   grid: Tile[][],
   playerSpawn: { x: number; y: number },
   count: number,
 ): { x: number; y: number }[] {
   const used = new Set<string>([`${playerSpawn.x},${playerSpawn.y}`]);
-  const candidates: { x: number; y: number; score: number }[] = [];
 
-  for (let y = 1; y < GRID_H - 1; y++) {
-    for (let x = 1; x < GRID_W - 1; x++) {
-      if (!isWalkable(grid, x, y)) continue;
-      const dist = Math.abs(x - playerSpawn.x) + Math.abs(y - playerSpawn.y);
-      const cornerBonus =
-        (x <= 2 || x >= GRID_W - 3 ? 2 : 0) + (y <= 2 || y >= GRID_H - 3 ? 2 : 0);
-      candidates.push({ x, y, score: dist + cornerBonus });
+  // Main-aisle rows first, then adjacent rows — left-to-right within the hall.
+  const yPriority = [
+    MAIN_AISLE_Y_TOP,
+    MAIN_AISLE_Y_BOTTOM,
+    MAIN_AISLE_Y_TOP - 1,
+    MAIN_AISLE_Y_BOTTOM + 1,
+    MAIN_AISLE_Y_TOP - 2,
+    MAIN_AISLE_Y_BOTTOM + 2,
+  ].filter((y) => y > 0 && y < GRID_H - 1);
+
+  const slots: { x: number; y: number }[] = [];
+  for (const y of yPriority) {
+    for (let x = START_ZONE_X_MIN; x <= START_ZONE_X_MAX; x++) {
+      slots.push({ x, y });
     }
   }
-
-  candidates.sort((a, b) => b.score - a.score);
-
-  const spawns: { x: number; y: number }[] = [];
-  for (const cell of candidates) {
-    if (spawns.length >= count) break;
-    const key = `${cell.x},${cell.y}`;
-    if (used.has(key)) continue;
-    const tooClose = spawns.some(
-      (s) => Math.abs(s.x - cell.x) + Math.abs(s.y - cell.y) < 3,
-    );
-    if (tooClose) continue;
-    spawns.push({ x: cell.x, y: cell.y });
-    used.add(key);
+  for (const c of getStartCorridorCells(grid)) {
+    if (!slots.some((s) => s.x === c.x && s.y === c.y)) slots.push(c);
   }
 
-  for (const cell of candidates) {
+  const spawns: { x: number; y: number }[] = [];
+  for (const cell of slots) {
     if (spawns.length >= count) break;
     const key = `${cell.x},${cell.y}`;
     if (used.has(key)) continue;
-    spawns.push({ x: cell.x, y: cell.y });
+    if (!isWalkable(grid, cell.x, cell.y)) continue;
+    spawns.push(cell);
     used.add(key);
   }
 

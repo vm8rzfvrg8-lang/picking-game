@@ -8,25 +8,29 @@ import {
 import {
   MAIN_AISLE_Y_BOTTOM,
   MAIN_AISLE_Y_TOP,
-  SUB_AISLE_XS,
+  isStartCorridorX,
+  isSubAisleX,
+  START_ZONE_X_MAX,
+  subAisleFlowDirection,
   isWalkable,
 } from './levelgen';
 import { GRID_H, GRID_W } from './constants';
 
-export type LaneKind = 'main' | 'sub' | 'other';
+export type LaneKind = 'main' | 'sub' | 'start' | 'other';
 
 export function laneAt(x: number, y: number): LaneKind {
+  if (isStartCorridorX(x)) return 'start';
   if (y === MAIN_AISLE_Y_TOP || y === MAIN_AISLE_Y_BOTTOM) return 'main';
-  if ((SUB_AISLE_XS as readonly number[]).includes(x)) return 'sub';
+  if (isSubAisleX(x)) return 'sub';
   return 'other';
 }
 
 export function flowAt(x: number, y: number): Direction | null {
+  if (isStartCorridorX(x)) return null;
   if (y === MAIN_AISLE_Y_TOP) return 'right';
   if (y === MAIN_AISLE_Y_BOTTOM) return 'left';
-  const idx = (SUB_AISLE_XS as readonly number[]).indexOf(x);
-  if (idx >= 0 && y !== MAIN_AISLE_Y_TOP && y !== MAIN_AISLE_Y_BOTTOM) {
-    return idx % 2 === 0 ? 'up' : 'down';
+  if (isSubAisleX(x) && y !== MAIN_AISLE_Y_TOP && y !== MAIN_AISLE_Y_BOTTOM) {
+    return subAisleFlowDirection(x);
   }
   return null;
 }
@@ -64,6 +68,66 @@ export function classifyMoveTrail(
   return null;
 }
 
+/** Pixel chevron for lane direction — fillRect only, no transforms. */
+function drawLaneChevron(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  flow: Direction,
+  color: string,
+) {
+  ctx.fillStyle = color;
+  if (flow === 'up') {
+    ctx.fillRect(cx - 1, cy - 5, 2, 2);
+    ctx.fillRect(cx - 3, cy - 1, 2, 2);
+    ctx.fillRect(cx + 1, cy - 1, 2, 2);
+    ctx.fillRect(cx - 5, cy + 3, 2, 2);
+    ctx.fillRect(cx + 3, cy + 3, 2, 2);
+  } else if (flow === 'down') {
+    ctx.fillRect(cx - 1, cy + 3, 2, 2);
+    ctx.fillRect(cx - 3, cy - 1, 2, 2);
+    ctx.fillRect(cx + 1, cy - 1, 2, 2);
+    ctx.fillRect(cx - 5, cy - 5, 2, 2);
+    ctx.fillRect(cx + 3, cy - 5, 2, 2);
+  } else if (flow === 'left') {
+    ctx.fillRect(cx - 5, cy - 1, 2, 2);
+    ctx.fillRect(cx - 1, cy - 3, 2, 2);
+    ctx.fillRect(cx - 1, cy + 1, 2, 2);
+    ctx.fillRect(cx + 3, cy - 5, 2, 2);
+    ctx.fillRect(cx + 3, cy + 3, 2, 2);
+  } else {
+    ctx.fillRect(cx + 3, cy - 1, 2, 2);
+    ctx.fillRect(cx - 1, cy - 3, 2, 2);
+    ctx.fillRect(cx - 1, cy + 1, 2, 2);
+    ctx.fillRect(cx - 5, cy - 5, 2, 2);
+    ctx.fillRect(cx - 5, cy + 3, 2, 2);
+  }
+}
+
+/** Warehouse floor tape marks framing the chevron. */
+function drawLaneTape(
+  ctx: CanvasRenderingContext2D,
+  ox: number,
+  oy: number,
+  tileSize: number,
+  flow: Direction,
+  tapeColor: string,
+) {
+  ctx.fillStyle = tapeColor;
+  const pad = 4;
+  if (flow === 'up' || flow === 'down') {
+    ctx.fillRect(ox + pad, oy + 3, 1, tileSize - 6);
+    ctx.fillRect(ox + tileSize - pad - 1, oy + 3, 1, tileSize - 6);
+    ctx.fillRect(ox + pad, oy + 3, tileSize - pad * 2, 1);
+    ctx.fillRect(ox + pad, oy + tileSize - 4, tileSize - pad * 2, 1);
+  } else {
+    ctx.fillRect(ox + 3, oy + pad, tileSize - 6, 1);
+    ctx.fillRect(ox + 3, oy + tileSize - pad - 1, tileSize - 6, 1);
+    ctx.fillRect(ox + 3, oy + pad, 1, tileSize - pad * 2);
+    ctx.fillRect(ox + tileSize - 4, oy + pad, 1, tileSize - pad * 2);
+  }
+}
+
 /** Draw a tinted flow arrow for movement trail (1s fade). */
 export function drawFlowTrailArrow(
   ctx: CanvasRenderingContext2D,
@@ -75,38 +139,21 @@ export function drawFlowTrailArrow(
 ) {
   const flow = flowAt(x, y);
   if (!flow || alpha <= 0) return;
-  const cx = x * tileSize + tileSize / 2;
-  const cy = y * tileSize + tileSize / 2;
-  const color =
+  const ox = x * tileSize;
+  const oy = y * tileSize;
+  const cx = ox + tileSize / 2;
+  const cy = oy + tileSize / 2;
+  const tape =
     kind === 'flow'
-      ? `rgba(50, 200, 95, ${0.78 * alpha})`
-      : `rgba(235, 55, 50, ${0.78 * alpha})`;
+      ? `rgba(70, 120, 85, ${0.45 * alpha})`
+      : `rgba(120, 45, 45, ${0.45 * alpha})`;
+  const chevron =
+    kind === 'flow'
+      ? `rgba(90, 210, 130, ${0.85 * alpha})`
+      : `rgba(235, 80, 75, ${0.85 * alpha})`;
 
-  ctx.save();
-  ctx.globalCompositeOperation = 'lighter';
-  ctx.fillStyle =
-    kind === 'flow'
-      ? `rgba(50, 200, 95, ${0.22 * alpha})`
-      : `rgba(235, 55, 50, ${0.22 * alpha})`;
-  ctx.fillRect(x * tileSize + 2, y * tileSize + 2, tileSize - 4, tileSize - 4);
-  ctx.fillStyle = color;
-  ctx.translate(cx, cy);
-  const rot: Record<Direction, number> = {
-    up: -Math.PI / 2,
-    down: Math.PI / 2,
-    left: Math.PI,
-    right: 0,
-  };
-  ctx.rotate(rot[flow]);
-  const tip = 8;
-  const base = 5.5;
-  ctx.beginPath();
-  ctx.moveTo(tip, 0);
-  ctx.lineTo(-tip * 0.55, -base);
-  ctx.lineTo(-tip * 0.55, base);
-  ctx.closePath();
-  ctx.fill();
-  ctx.restore();
+  drawLaneTape(ctx, ox, oy, tileSize, flow, tape);
+  drawLaneChevron(ctx, cx, cy, flow, chevron);
 }
 
 const DELTA: Record<Direction, { dx: number; dy: number }> = {
@@ -328,7 +375,7 @@ export function stunForCollisionKnockback(
   return superSpeedActive ? Math.floor(base / 2) : base;
 }
 
-/** Draw flow arrow on floor tile (called from renderer). */
+/** Draw flow arrow on floor tile — industrial lane tape + pixel chevron. */
 export function drawFlowArrow(
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -338,60 +385,39 @@ export function drawFlowArrow(
 ) {
   const flow = flowAt(x, y);
   if (!flow) return;
-  const cx = x * tileSize + tileSize / 2;
-  const cy = y * tileSize + tileSize / 2;
-  const color = wrongWayFlash ? 'rgba(255,90,90,0.85)' : 'rgba(255,255,255,0.42)';
-  ctx.save();
-  // Soft dark backing so arrows read clearly on the darker floor
-  ctx.fillStyle = wrongWayFlash ? 'rgba(80,20,20,0.35)' : 'rgba(0,0,0,0.28)';
-  ctx.translate(cx, cy);
-  const rot: Record<Direction, number> = {
-    up: -Math.PI / 2,
-    down: Math.PI / 2,
-    left: Math.PI,
-    right: 0,
-  };
-  ctx.rotate(rot[flow]);
-  const tip = 8;
-  const base = 5.5;
-  ctx.beginPath();
-  ctx.moveTo(tip + 0.5, 0);
-  ctx.lineTo(-tip * 0.55, -base - 0.5);
-  ctx.lineTo(-tip * 0.55, base + 0.5);
-  ctx.closePath();
-  ctx.fill();
+  const ox = x * tileSize;
+  const oy = y * tileSize;
+  const cx = ox + tileSize / 2;
+  const cy = oy + tileSize / 2;
+  const tape = wrongWayFlash ? 'rgba(120, 40, 40, 0.55)' : 'rgba(70, 74, 88, 0.65)';
+  const chevron = wrongWayFlash ? '#e86058' : '#c4b070';
 
-  ctx.fillStyle = color;
-  ctx.beginPath();
-  ctx.moveTo(tip, 0);
-  ctx.lineTo(-tip * 0.55, -base);
-  ctx.lineTo(-tip * 0.55, base);
-  ctx.closePath();
-  ctx.fill();
-  ctx.restore();
+  drawLaneTape(ctx, ox, oy, tileSize, flow, tape);
+  drawLaneChevron(ctx, cx, cy, flow, chevron);
 }
 
-/** Draw center divider between main aisle rows (road-style). */
-export function drawMainAisleCenterLine(ctx: CanvasRenderingContext2D, tileSize: number) {
+/** Draw center divider between main aisle rows — warehouse zone striping. */
+export function drawMainAisleCenterLine(
+  ctx: CanvasRenderingContext2D,
+  tileSize: number,
+  cullMinX?: number,
+  cullMaxX?: number,
+) {
   const y = ((MAIN_AISLE_Y_TOP + MAIN_AISLE_Y_BOTTOM + 1) / 2) * tileSize;
-  const x0 = tileSize;
-  const x1 = (GRID_W - 1) * tileSize;
-  ctx.save();
+  const aisleStartX = (START_ZONE_X_MAX + 1) * tileSize;
+  const x0 = Math.max(aisleStartX, cullMinX ?? aisleStartX);
+  const x1 = Math.min((GRID_W - 1) * tileSize, cullMaxX ?? (GRID_W - 1) * tileSize);
+  if (x0 >= x1) return;
 
-  // Dark road base
-  ctx.fillStyle = 'rgba(20,18,28,0.6)';
-  ctx.fillRect(x0, y - 4, x1 - x0, 8);
+  ctx.fillStyle = 'rgba(22, 24, 32, 0.75)';
+  ctx.fillRect(x0, y - 3, x1 - x0, 6);
 
-  // Edge rails
-  ctx.fillStyle = 'rgba(255,228,107,0.5)';
-  ctx.fillRect(x0, y - 3.5, x1 - x0, 1);
-  ctx.fillRect(x0, y + 2.5, x1 - x0, 1);
+  ctx.fillStyle = 'rgba(196, 176, 112, 0.55)';
+  ctx.fillRect(x0, y - 2, x1 - x0, 1);
+  ctx.fillRect(x0, y + 1, x1 - x0, 1);
 
-  // Thick dash blocks
-  ctx.fillStyle = 'rgba(255,228,107,0.92)';
-  for (let x = x0 + 4; x < x1 - 4; x += 16) {
-    ctx.fillRect(x, y - 1.5, 10, 3);
+  ctx.fillStyle = 'rgba(196, 176, 112, 0.9)';
+  for (let x = x0 + 6; x < x1 - 6; x += 14) {
+    ctx.fillRect(x, y, 6, 1);
   }
-
-  ctx.restore();
 }

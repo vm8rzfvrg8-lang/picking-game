@@ -37,23 +37,30 @@ export interface RivalEntity {
   jamStun: boolean;
 }
 
-// A pick target: a bookshelf cell with an index (order to pick in)
+// A pick target: a bookshelf cell with location number and pick order
 export interface PickTarget {
-  index: number; // 0-based order
+  index: number; // 0-based pick sequence
+  locationNumber: number; // 1-based warehouse shelf location
   x: number;
   y: number;
   done: boolean;
 }
 
-export const GRID_W = 18;
+/** World map width in tiles (horizontal warehouse repeat). */
+export const GRID_W = 75;
+/** World map height in tiles. */
 export const GRID_H = 14;
+/** Visible viewport width in tiles (canvas shows this many columns). */
+export const VIEWPORT_W = 18;
+/** Visible viewport height in tiles. */
+export const VIEWPORT_H = 14;
 export const TILE = 36;
 
 export const MIN_CPU_COUNT = 1;
 export const MAX_CPU_COUNT = 7;
 export const DEFAULT_CPU_COUNT = 7;
 
-export const PICK_COUNT = 5;
+export const PICK_COUNT = 30;
 export const PICK_DURATION_MS = 2500; // 2.5-second pick countdown
 export const RIVAL_STEP_MS = 580; // rival moves one cell every this many ms
 export const PLAYER_COOLDOWN_MS = 130; // player move cooldown
@@ -101,7 +108,9 @@ export interface GameState {
   /** Selected CPU count (1–7) for the current session. */
   cpuCount: number;
   targets: PickTarget[]; // player's ordered pick list
-  currentTarget: number; // index into targets[] of the next to pick (0..PICK_COUNT)
+  currentTarget: number; // index into targets[] of the next to pick
+  /** 1-based shelf location numbers keyed as "x,y". */
+  shelfLocations: Record<string, number>;
   pickProgress: number; // 0..1 gauge fill while picking
   isPicking: boolean;
   goals: { x: number; y: number }[];
@@ -147,9 +156,9 @@ export function setPrimaryRival(state: GameState, rival: RivalEntity): GameState
 }
 
 export const COLORS = {
-  // Floor — warm stone tiles with subtle variation
-  floorA: '#3a3550',
-  floorB: '#423d5c',
+  // Floor — warehouse concrete / epoxy tones
+  floorA: '#2c303c',
+  floorB: '#323848',
   floorC: '#383350',
   floorLine: 'rgba(80,70,110,0.25)',
   floorGrout: '#2a2638',

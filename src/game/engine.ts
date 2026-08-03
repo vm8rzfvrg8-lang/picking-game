@@ -27,7 +27,9 @@ import { tutorialRivalPatrolDir } from './tutorial/layout';
 import {
   assignTargets,
   bfsDistances,
+  buildShelfLocationMap,
   findCpuSpawnPoints,
+  findPlayerSpawn,
   findWalkableNear,
   generateLibrary,
   GOAL_CELLS,
@@ -40,11 +42,11 @@ import {
 function createRivalEntity(
   id: number,
   spawn: { x: number; y: number },
-  grid: GameState['grid'],
   shelfCells: { x: number; y: number }[],
+  shelfLocations: Record<string, number>,
   rng: ReturnType<typeof makeRng>,
 ): RivalEntity {
-  const rivalTargets = assignTargets(grid, shelfCells, spawn, rng);
+  const rivalTargets = assignTargets(shelfCells, shelfLocations, rng);
   return {
     id,
     x: spawn.x,
@@ -116,22 +118,24 @@ export function newGame(
   const s = seed ?? Math.floor(Math.random() * 1e9);
   const rng = makeRng(s);
   const { grid, shelfCells } = generateLibrary(rng);
+  const shelfLocations = buildShelfLocationMap(shelfCells);
 
-  const playerSpawn = { x: 1, y: 1 };
+  const playerSpawn = findPlayerSpawn(grid);
   if (!isWalkable(grid, playerSpawn.x, playerSpawn.y)) {
     const near = findWalkableNear(grid, 'tl');
     playerSpawn.x = near.x;
     playerSpawn.y = near.y;
   }
 
-  const targets = assignTargets(grid, shelfCells, playerSpawn, rng);
+  const targets = assignTargets(shelfCells, shelfLocations, rng);
   const cpuSpawns = findCpuSpawnPoints(grid, playerSpawn, count);
   const rivals = cpuSpawns.map((spawn, id) =>
-    createRivalEntity(id, spawn, grid, shelfCells, rng),
+    createRivalEntity(id, spawn, shelfCells, shelfLocations, rng),
   );
 
   return {
     grid,
+    shelfLocations,
     player: {
       x: playerSpawn.x,
       y: playerSpawn.y,

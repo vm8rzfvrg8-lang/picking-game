@@ -86,7 +86,7 @@ function RulesModal({ onClose }: { onClose: () => void }) {
           <div className="flex items-start gap-2">
             <Target className="mt-0.5 h-4 w-4 shrink-0 text-[#ffe46b]" />
             <p>
-              光る<span className="font-bold text-[#ffe46b]">5か所の本棚</span>を順番にピック。
+              光る<span className="font-bold text-[#ffe46b]">30か所の本棚</span>を棚番号の若い順にピック。
               全部取ったら右端のシャッターへ向かえ。
             </p>
           </div>

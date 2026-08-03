@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { GameState, GRID_H, GRID_W, TILE, DEFAULT_CPU_COUNT } from './game/constants';
+import { GameState, DEFAULT_CPU_COUNT } from './game/constants';
+import { computeCameraTransform, cullBoundsFromCamera, type CameraState } from './game/camera';
 import { Difficulty } from './game/difficulty';
 import { Direction, Input, isPickInput, newGame, startPlaying, enterTutorial, returnToStart, step } from './game/engine';
 import {
@@ -14,6 +15,7 @@ import {
 import { sfx, setMuted, unlockAudio, playSkillSfx } from './game/sound';
 import { useKeyboardInput } from './hooks/useKeyboardInput';
 import { useAnimationFrame } from './hooks/useAnimationFrame';
+import { useCanvasResize } from './hooks/useCanvasResize';
 import { StartScreen } from './components/StartScreen';
 import { TutorialScene } from './components/TutorialScene';
 import { GameplayTopBar } from './components/GameplayTopBar';
@@ -53,6 +55,16 @@ import {
 
 const PLAYER_COOLDOWN_MS = 130;
 
+function snapCameraTo(
+  cameraRef: React.MutableRefObject<CameraState>,
+  viewportRef: React.MutableRefObject<{ width: number; height: number }>,
+  gridX: number,
+  gridY: number,
+) {
+  const { width, height } = viewportRef.current;
+  cameraRef.current = computeCameraTransform(gridX, width, height);
+}
+
 function syncRivalVisuals(
   refs: React.MutableRefObject<Record<number, { x: number; y: number }>>,
   game: GameState,
@@ -66,11 +78,13 @@ function syncRivalVisuals(
 
 export default function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const viewportRef = useCanvasResize(canvasRef);
   const kbRef = useKeyboardInput();
 
-  const [game, setGame] = useState<GameState>(() =>
-    newGame(undefined, 'normal', SkillType.SuperSpeed, DEFAULT_CPU_COUNT),
-  );
+  const [game, setGame] = useState<GameState>(() => {
+    const g = newGame(undefined, 'normal', SkillType.SuperSpeed, DEFAULT_CPU_COUNT);
+    return g;
+  });
   const [difficulty, setDifficulty] = useState<Difficulty>('normal');
   const [cpuCount, setCpuCount] = useState(DEFAULT_CPU_COUNT);
   const [selectedSkill, setSelectedSkill] = useState<SkillType>(SkillType.SuperSpeed);
@@ -88,6 +102,13 @@ export default function App() {
   // Player move cooldown accumulator
   const moveCdRef = useRef(0);
   const blinkRef = useRef(0);
+  const cameraRef = useRef<CameraState>({
+    cameraX: 0,
+    cameraY: 0,
+    scale: 1,
+    viewWorldW: 648,
+    viewWorldH: 504,
+  });
   const vfxRef = useRef<VfxState>(createVfx());
   const goalFxDoneRef = useRef(false);
   const skillUseRef = useRef(false);
@@ -103,6 +124,7 @@ export default function App() {
     playerVisualRef.current = { x: g.player.x, y: g.player.y };
     rivalVisualRefs.current = {};
     syncRivalVisuals(rivalVisualRefs, g);
+    snapCameraTo(cameraRef, viewportRef, g.player.x, g.player.y);
     moveCdRef.current = 0;
     touchDirRef.current = null;
     tutorialStatsRef.current = createTutorialStats();
@@ -114,6 +136,10 @@ export default function App() {
   const { snapshot: tutorialSnapshot, reset: resetTutorialManager, start: startTutorial, tick: tickTutorial } =
     useTutorialManager(quitTutorial);
   tutorialPhaseRef.current = tutorialSnapshot.phase;
+
+  useEffect(() => {
+    snapCameraTo(cameraRef, viewportRef, gameRef.current.player.x, gameRef.current.player.y);
+  }, []);
 
   const applyTutorialLayout = useCallback((callbacks: TutorialCallback[]) => {
     for (const cb of callbacks) {
@@ -127,6 +153,7 @@ export default function App() {
         playerVisualRef.current = { x: g.player.x, y: g.player.y };
         rivalVisualRefs.current = {};
         syncRivalVisuals(rivalVisualRefs, g);
+        snapCameraTo(cameraRef, viewportRef, g.player.x, g.player.y);
         setGame(g);
         continue;
       }
@@ -141,6 +168,7 @@ export default function App() {
       playerVisualRef.current = { x: g.player.x, y: g.player.y };
       rivalVisualRefs.current = {};
       syncRivalVisuals(rivalVisualRefs, g);
+      snapCameraTo(cameraRef, viewportRef, g.player.x, g.player.y);
       setGame(g);
     }
   }, []);
@@ -152,6 +180,7 @@ export default function App() {
     playerVisualRef.current = { x: g.player.x, y: g.player.y };
     rivalVisualRefs.current = {};
     syncRivalVisuals(rivalVisualRefs, g);
+    snapCameraTo(cameraRef, viewportRef, g.player.x, g.player.y);
     moveCdRef.current = 0;
     touchDirRef.current = null;
     resetVfx(vfxRef.current);
@@ -184,6 +213,7 @@ export default function App() {
     playerVisualRef.current = { x: g.player.x, y: g.player.y };
     rivalVisualRefs.current = {};
     syncRivalVisuals(rivalVisualRefs, g);
+    snapCameraTo(cameraRef, viewportRef, g.player.x, g.player.y);
     moveCdRef.current = 0;
     resetVfx(vfxRef.current);
     goalFxDoneRef.current = false;
@@ -220,6 +250,14 @@ export default function App() {
     const playerLerp = isSuperSpeedActive(g.skills) ? 24 : 16;
     pv.x = lerp(pv.x, g.player.x, Math.min(1, playerLerp * dt));
     pv.y = lerp(pv.y, g.player.y, Math.min(1, playerLerp * dt));
+    const { width: viewW, height: viewH } = viewportRef.current;
+    const targetCam = computeCameraTransform(pv.x, viewW, viewH);
+    const cam = cameraRef.current;
+    cam.cameraX = lerp(cam.cameraX, targetCam.cameraX, Math.min(1, 14 * dt));
+    cam.cameraY = 0;
+    cam.scale = targetCam.scale;
+    cam.viewWorldW = targetCam.viewWorldW;
+    cam.viewWorldH = targetCam.viewWorldH;
     for (const rival of g.rivals) {
       const rv = rivalVisualRefs.current[rival.id] ?? { x: rival.x, y: rival.y };
       rv.x = lerp(rv.x, rival.x, Math.min(1, 12 * dt));
@@ -260,13 +298,13 @@ export default function App() {
         else if (ev.type === 'pickDone' && ev.who === 'player') {
           sfx.pickup();
           const t = res.state.targets[ev.index];
-          if (t) triggerPickComplete(vfx, t.x, t.y, 'player', ev.index);
+          if (t) triggerPickComplete(vfx, t.x, t.y, 'player', t.locationNumber);
         } else if (ev.type === 'pickDone' && ev.who === 'rival') {
           sfx.pickup();
           const rival =
             res.state.rivals.find((r) => r.id === ev.entityId) ?? res.state.rivals[0];
           const t = rival?.targets[ev.index];
-          if (t) triggerPickComplete(vfx, t.x, t.y, 'rival', ev.index);
+          if (t) triggerPickComplete(vfx, t.x, t.y, 'rival', t.locationNumber);
         } else if (ev.type === 'collision') {
           sfx.collision();
           if (ev.involvesPlayer) {
@@ -341,12 +379,18 @@ export default function App() {
     if (canvas) {
       const ctx = canvas.getContext('2d');
       if (ctx) {
+        const { width: viewW, height: viewH, dpr } = viewportRef.current;
         const shake = getShakeOffset(vfxRef.current);
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        const cam = cameraRef.current;
+        const cull = cullBoundsFromCamera(cam);
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.clearRect(0, 0, viewW, viewH);
         ctx.save();
         ctx.translate(shake.x, shake.y);
-        render(ctx, gameRef.current, { blink: blinkRef.current });
-        drawVfx(ctx, vfxRef.current);
+        ctx.scale(cam.scale, cam.scale);
+        ctx.translate(-cam.cameraX, -cam.cameraY);
+        render(ctx, gameRef.current, { blink: blinkRef.current, cull });
+        drawVfx(ctx, vfxRef.current, cull);
         if (gameRef.current.phase !== 'start') {
           drawSmoothEntities(
             ctx,
@@ -355,7 +399,7 @@ export default function App() {
             rivalVisualRefs.current,
             blinkRef.current,
           );
-          drawTrailMarks(ctx, vfxRef.current);
+          drawTrailMarks(ctx, vfxRef.current, cull);
           drawSkillBurst(
             ctx,
             vfxRef.current,
@@ -365,7 +409,7 @@ export default function App() {
           );
         }
         ctx.restore();
-        applyRetroColorFilter(ctx, canvas.width, canvas.height);
+        applyRetroColorFilter(ctx, viewW, viewH);
       }
     }
   });
@@ -377,9 +421,21 @@ export default function App() {
       const ctx = canvas.getContext('2d');
       if (ctx) {
         blinkRef.current += 0.016;
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        render(ctx, gameRef.current, { blink: blinkRef.current });
-        applyRetroColorFilter(ctx, canvas.width, canvas.height);
+        const { width: viewW, height: viewH, dpr } = viewportRef.current;
+        const cam = computeCameraTransform(
+          gameRef.current.player.x,
+          viewW,
+          viewH,
+        );
+        const cull = cullBoundsFromCamera(cam);
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.clearRect(0, 0, viewW, viewH);
+        ctx.save();
+        ctx.scale(cam.scale, cam.scale);
+        ctx.translate(-cam.cameraX, -cam.cameraY);
+        render(ctx, gameRef.current, { blink: blinkRef.current, cull });
+        ctx.restore();
+        applyRetroColorFilter(ctx, viewW, viewH);
       }
     }
   });
@@ -447,8 +503,6 @@ export default function App() {
         <div className="game-canvas-wrap">
           <canvas
             ref={canvasRef}
-            width={GRID_W * TILE}
-            height={GRID_H * TILE}
             className="game-canvas"
             style={{ imageRendering: 'pixelated' }}
           />
@@ -463,13 +517,13 @@ export default function App() {
         {game.phase === 'playing' && <LeaderboardSidebar game={game} />}
 
         {showDpad && (
-          <div className="game-controls-dpad lg:hidden">
+          <div className="game-controls-dpad game-controls-overlay">
             <MobileControls onDir={handleTouchDir} docked />
           </div>
         )}
 
         {showSkillControls && (
-          <div className="game-controls-skill">
+          <div className="game-controls-skill game-controls-overlay">
             <SkillButton
               selectedSkill={game.selectedSkill}
               skills={game.skills}

@@ -2,7 +2,7 @@ import type { GameState } from '../engine';
 import { SkillType, fillSkillGauge } from '../skills';
 import type { Direction } from '../constants';
 import { setPrimaryRival } from '../constants';
-import { isShelf, isWalkable, MAIN_AISLE_Y_BOTTOM, MAIN_AISLE_Y_TOP } from '../levelgen';
+import { isShelf, isWalkable, MAIN_AISLE_Y_BOTTOM, MAIN_AISLE_Y_TOP, shelfLocationKey } from '../levelgen';
 import {
   TUTORIAL_PLAYER_SPAWN,
   TUTORIAL_RIVAL_SPAWN,
@@ -21,6 +21,10 @@ function tryDir(grid: GameState['grid'], x: number, y: number, dir: Direction): 
   return isWalkable(grid, x + dx, y + dy) ? dir : null;
 }
 
+function shelfLocationAt(state: GameState, x: number, y: number): number {
+  return state.shelfLocations[shelfLocationKey(x, y)] ?? 0;
+}
+
 function configureStep1PickTarget(state: GameState): GameState {
   let shelfX = TUTORIAL_STEP1_SHELF.x;
   let shelfY = TUTORIAL_STEP1_SHELF.y;
@@ -30,7 +34,14 @@ function configureStep1PickTarget(state: GameState): GameState {
 
   const targets = state.targets.map((t, i) => {
     if (i === 0) {
-      return { ...t, x: shelfX, y: shelfY, done: false, index: 0 };
+      return {
+        ...t,
+        x: shelfX,
+        y: shelfY,
+        done: false,
+        index: 0,
+        locationNumber: shelfLocationAt(state, shelfX, shelfY),
+      };
     }
     return { ...t, done: true };
   });
@@ -68,7 +79,14 @@ function configureStep5SuperSpeed(state: GameState): GameState {
 
   const targets = state.targets.map((t, i) => {
     if (i === 0) {
-      return { ...t, x: shelfX, y: shelfY, done: false, index: 0 };
+      return {
+        ...t,
+        x: shelfX,
+        y: shelfY,
+        done: false,
+        index: 0,
+        locationNumber: shelfLocationAt(state, shelfX, shelfY),
+      };
     }
     return { ...t, done: true };
   });
@@ -159,6 +177,11 @@ function configureStep5JamSignal(state: GameState): GameState {
         y: TUTORIAL_STEP5_JAM_RIVAL_SHELF.y,
         done: false,
         index: 0,
+        locationNumber: shelfLocationAt(
+          state,
+          TUTORIAL_STEP5_JAM_RIVAL_SHELF.x,
+          TUTORIAL_STEP5_JAM_RIVAL_SHELF.y,
+        ),
       };
     }
     return { ...t, done: true };

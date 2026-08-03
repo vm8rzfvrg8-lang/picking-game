@@ -58,6 +58,7 @@ export function MobileControls({ onDir, docked = false }: Props) {
   const onPadPointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
       e.preventDefault();
+      e.currentTarget.setPointerCapture(e.pointerId);
       activePointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
       syncDirFromPointers();
     },
@@ -97,9 +98,9 @@ export function MobileControls({ onDir, docked = false }: Props) {
   );
 
   const btnClass =
-    'pointer-events-none flex items-center justify-center rounded-md border border-[#2a3a5d] bg-[#0c1530] text-[#9fb0d8] select-none';
+    'pointer-events-none flex items-center justify-center rounded-md border border-white/15 bg-black/25 text-white/75 select-none';
 
-  const padSize = docked ? 'h-[6.75rem] w-[6.75rem] sm:h-[7.25rem] sm:w-[7.25rem]' : 'h-40 w-40';
+  const padSize = docked ? 'h-[7.5rem] w-[7.5rem] sm:h-[8rem] sm:w-[8rem]' : 'h-40 w-40';
   const iconSize = docked ? 'h-5 w-5' : 'h-6 w-6';
 
   return (
@@ -123,7 +124,7 @@ export function MobileControls({ onDir, docked = false }: Props) {
           <ChevronLeft className={iconSize} />
         </div>
         <div className="flex items-center justify-center">
-          <span className={`rounded-full ${active ? 'h-2 w-2 bg-[#3bd4ff]' : 'h-1.5 w-1.5 bg-[#2a3a5d]'}`} />
+          <span className={`rounded-full ${active ? 'h-2.5 w-2.5 bg-[#3bd4ff]/90' : 'h-2 w-2 bg-white/25'}`} />
         </div>
         <div className={btnClass}>
           <ChevronRight className={iconSize} />

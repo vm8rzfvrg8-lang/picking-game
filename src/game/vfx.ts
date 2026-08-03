@@ -144,7 +144,7 @@ export function triggerPickComplete(
   gx: number,
   gy: number,
   who: 'player' | 'rival',
-  index: number,
+  locationNumber: number,
 ) {
   const cx = gx * TILE + TILE / 2;
   const cy = gy * TILE + TILE / 2;
@@ -158,7 +158,7 @@ export function triggerPickComplete(
     x: cx,
     y: cy - 8,
     timer: 700,
-    label: `#${index + 1} GET!`,
+    label: `#${locationNumber} GET!`,
     color: base,
   });
 
@@ -292,31 +292,25 @@ export function getShakeOffset(vfx: VfxState): { x: number; y: number } {
   };
 }
 
-export function drawVfx(ctx: CanvasRenderingContext2D, vfx: VfxState) {
+export function drawVfx(ctx: CanvasRenderingContext2D, vfx: VfxState, cull?: import('./camera').CullBounds) {
   for (const f of vfx.pickFlashes) {
+    if (cull) {
+      const ox = f.gx * TILE;
+      const oy = f.gy * TILE;
+      if (ox + TILE <= cull.minX || ox >= cull.maxX || oy + TILE <= cull.minY || oy >= cull.maxY) continue;
+    }
     const t = f.timer / 520;
     const ox = f.gx * TILE;
     const oy = f.gy * TILE;
-    const rgb = f.who === 'player' ? '59,212,255' : '255,140,66';
-    ctx.save();
-    ctx.globalCompositeOperation = 'lighter';
-    const g = ctx.createRadialGradient(
-      ox + TILE / 2, oy + TILE / 2, 2,
-      ox + TILE / 2, oy + TILE / 2, TILE * 0.85,
-    );
-    g.addColorStop(0, `rgba(${rgb},${0.55 * t})`);
-    g.addColorStop(0.5, `rgba(255,228,107,${0.25 * t})`);
-    g.addColorStop(1, 'rgba(255,228,107,0)');
-    ctx.fillStyle = g;
-    ctx.fillRect(ox - 6, oy - 6, TILE + 12, TILE + 12);
-    ctx.restore();
-
-    ctx.strokeStyle = `rgba(255,255,255,${0.7 * t})`;
+    ctx.fillStyle = f.who === 'player' ? `rgba(59,212,255,${0.4 * t})` : `rgba(255,140,66,${0.4 * t})`;
+    ctx.fillRect(ox, oy, TILE, TILE);
+    ctx.strokeStyle = `rgba(255,255,255,${0.6 * t})`;
     ctx.lineWidth = 2;
     ctx.strokeRect(ox + 2, oy + 2, TILE - 4, TILE - 4);
   }
 
   for (const p of vfx.particles) {
+    if (cull && (p.x >= cull.maxX || p.x + p.size <= cull.minX || p.y >= cull.maxY || p.y + p.size <= cull.minY)) continue;
     const a = Math.min(1, p.life / (p.maxLife * 0.35));
     ctx.globalAlpha = a;
     ctx.fillStyle = p.color;
@@ -360,9 +354,16 @@ export function drawSkillBurst(
 }
 
 /** Draw lane trail marks (call after entities so departed tiles stay visible). */
-export function drawTrailMarks(ctx: CanvasRenderingContext2D, vfx: VfxState) {
+export function drawTrailMarks(ctx: CanvasRenderingContext2D, vfx: VfxState, cull?: import('./camera').CullBounds) {
   for (const t of vfx.trailMarks) {
+    if (cull && !isTrailVisible(t.gx, t.gy, cull)) continue;
     const alpha = Math.min(1, t.timer / TRAIL_MARK_MS);
     drawFlowTrailArrow(ctx, t.gx, t.gy, TILE, t.kind, alpha);
   }
+}
+
+function isTrailVisible(gx: number, gy: number, cull: import('./camera').CullBounds): boolean {
+  const ox = gx * TILE;
+  const oy = gy * TILE;
+  return ox + TILE > cull.minX && ox < cull.maxX && oy + TILE > cull.minY && oy < cull.maxY;
 }

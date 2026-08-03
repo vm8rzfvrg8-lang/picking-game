@@ -1,9 +1,32 @@
 import { COLORS, GameState, GRID_H, GRID_W, RIVAL_PALETTE, TILE } from './constants';
+import type { CullBounds } from './camera';
 import { drawFlowArrow, drawMainAisleCenterLine, flowAt, isWrongWay } from './flow';
-import { isGoalCell, isShelf } from './levelgen';
+import { isGoalCell, isShelf, isStartCorridorX, shelfLocationKey, START_ZONE_X_MIN } from './levelgen';
 
 export interface RenderOpts {
-  blink: number; // seconds, for pulsing
+  blink: number;
+  /** World-space visible rect — tiles outside are skipped. */
+  cull?: CullBounds;
+}
+
+function tileRange(cull: CullBounds) {
+  return {
+    minGX: Math.max(0, Math.floor(cull.minX / TILE)),
+    maxGX: Math.min(GRID_W - 1, Math.ceil(cull.maxX / TILE) - 1),
+    minGY: Math.max(0, Math.floor(cull.minY / TILE)),
+    maxGY: Math.min(GRID_H - 1, Math.ceil(cull.maxY / TILE) - 1),
+  };
+}
+
+/** Snap to integer pixel — avoids sub-pixel AA cost. */
+function px(v: number): number {
+  return v | 0;
+}
+
+function isCellVisible(gx: number, gy: number, cull: CullBounds): boolean {
+  const ox = gx * TILE;
+  const oy = gy * TILE;
+  return ox + TILE > cull.minX && ox < cull.maxX && oy + TILE > cull.minY && oy < cull.maxY;
 }
 
 function bookColor(x: number, y: number): string {
@@ -11,12 +34,47 @@ function bookColor(x: number, y: number): string {
   return arr[(x * 7 + y * 13) % arr.length];
 }
 
-/** Calm passage floor — low-contrast dark stone, no tile seams. */
+/** Warehouse aisle floor — dark blue-gray, lets wood shelves pop. */
 const PASSAGE_FLOOR = {
-  base: '#464038',
-  speckA: '#403c36',
-  speckB: '#3a3632',
+  base: '#2c303c',
+  speckA: '#262a34',
+  speckB: '#232730',
+  seam: '#363b48',
 } as const;
+
+/** Start bay floor — slightly lighter dock tone. */
+const START_FLOOR = {
+  base: '#323848',
+  edge: '#c9a227',
+  mark: '#3a4050',
+} as const;
+
+/** Static wall palette — concrete + metal frame (no gradients). */
+const WALL_PIXEL = {
+  concrete: '#3a3e4c',
+  concreteHi: '#484e5e',
+  concreteLo: '#2a2e3a',
+  mortar: '#323642',
+  metal: '#566074',
+  metalHi: '#6e7890',
+  metalLo: '#404858',
+  rivet: '#8a94a8',
+  beam: '#525868',
+} as const;
+
+/** Lightweight ground shadow — single fill, no shadowBlur. */
+function drawGroundShadow(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  footY: number,
+  rx = 11,
+  ry = 4,
+) {
+  ctx.fillStyle = 'rgba(0,0,0,0.24)';
+  ctx.beginPath();
+  ctx.ellipse(px(cx), px(footY), rx, ry, 0, 0, Math.PI * 2);
+  ctx.fill();
+}
 
 function drawPassageFloorTile(
   ctx: CanvasRenderingContext2D,
@@ -28,18 +86,43 @@ function drawPassageFloorTile(
   ctx.fillStyle = PASSAGE_FLOOR.base;
   ctx.fillRect(ox, oy, TILE, TILE);
 
+  ctx.fillStyle = PASSAGE_FLOOR.seam;
+  ctx.fillRect(ox, oy + TILE - 1, TILE, 1);
+  ctx.fillRect(ox + TILE - 1, oy, 1, TILE);
+
   const seed = gx * 17 + gy * 31;
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < 4; i++) {
     if ((seed + i * 5) % 4 !== 0) continue;
-    const px = (seed + i * 11) % (TILE - 2) + 1;
-    const py = (seed + i * 17) % (TILE - 2) + 1;
+    const px0 = ox + ((seed + i * 11) % (TILE - 2)) + 1;
+    const py0 = oy + ((seed + i * 17) % (TILE - 2)) + 1;
     ctx.fillStyle = i % 2 === 0 ? PASSAGE_FLOOR.speckA : PASSAGE_FLOOR.speckB;
-    ctx.fillRect(ox + px, oy + py, 1, 1);
+    ctx.fillRect(px0, py0, 1, 1);
+  }
+}
+
+function drawStartCorridorTile(
+  ctx: CanvasRenderingContext2D,
+  ox: number,
+  oy: number,
+  gx: number,
+  gy: number,
+) {
+  const isLeftEdge = gx === START_ZONE_X_MIN;
+  ctx.fillStyle = isLeftEdge ? START_FLOOR.base : '#363c4a';
+  ctx.fillRect(ox, oy, TILE, TILE);
+
+  if (isLeftEdge) {
+    ctx.fillStyle = START_FLOOR.edge;
+    ctx.fillRect(ox, oy + 5, 2, TILE - 10);
+  } else {
+    ctx.fillStyle = 'rgba(201,162,39,0.18)';
+    ctx.fillRect(ox, oy + TILE - 2, TILE, 1);
+    ctx.fillRect(ox + TILE - 1, oy, 1, TILE);
   }
 
-  if (seed % 9 === 0) {
-    ctx.fillStyle = PASSAGE_FLOOR.speckB;
-    ctx.fillRect(ox + 6 + (seed % 22), oy + 8 + ((seed >> 2) % 18), 2, 1);
+  ctx.fillStyle = START_FLOOR.mark;
+  if ((gx + gy) % 5 === 0) {
+    ctx.fillRect(ox + 10, oy + 14, 6, 2);
   }
 }
 
@@ -68,46 +151,21 @@ function drawLegacyFloorBase(
   gx: number,
   gy: number,
 ) {
-  const checker = (gx + gy) % 2 === 0;
-  ctx.fillStyle = checker ? COLORS.floorA : COLORS.floorB;
-  ctx.fillRect(ox, oy, TILE, TILE);
-
-  const grad = ctx.createRadialGradient(
-    ox + TILE / 2, oy + TILE / 2, 1,
-    ox + TILE / 2, oy + TILE / 2, TILE * 0.7,
-  );
-  grad.addColorStop(0, 'rgba(255,255,255,0.04)');
-  grad.addColorStop(1, 'rgba(0,0,0,0.08)');
-  ctx.fillStyle = grad;
+  ctx.fillStyle = '#2a2e3a';
   ctx.fillRect(ox, oy, TILE, TILE);
 }
 
-/** Full-canvas warm sepia/amber tint — call after all layers are drawn. */
+/** Full-canvas warm sepia tint — single pass, no gradients. */
 export function applyRetroColorFilter(
   ctx: CanvasRenderingContext2D,
   width: number,
   height: number,
 ) {
-  ctx.save();
-
-  const vignette = ctx.createRadialGradient(
-    width / 2, height / 2, width * 0.15,
-    width / 2, height / 2, Math.max(width, height) * 0.72,
-  );
-  vignette.addColorStop(0, 'rgba(255, 225, 170, 0.05)');
-  vignette.addColorStop(1, 'rgba(110, 75, 35, 0.12)');
-  ctx.fillStyle = vignette;
-  ctx.fillRect(0, 0, width, height);
-
+  const prevOp = ctx.globalCompositeOperation;
   ctx.globalCompositeOperation = 'multiply';
-  ctx.fillStyle = 'rgba(255, 238, 210, 0.07)';
+  ctx.fillStyle = 'rgba(255, 235, 205, 0.09)';
   ctx.fillRect(0, 0, width, height);
-
-  ctx.globalCompositeOperation = 'overlay';
-  ctx.fillStyle = 'rgba(170, 110, 50, 0.05)';
-  ctx.fillRect(0, 0, width, height);
-
-  ctx.restore();
+  ctx.globalCompositeOperation = prevOp;
 }
 
 export function render(ctx: CanvasRenderingContext2D, state: GameState, opts: RenderOpts) {
@@ -152,39 +210,25 @@ export function drawPlayerMarkerAt(
   ctx.save();
   ctx.globalCompositeOperation = 'source-over';
 
-  // Soft glow halo for contrast on busy tiles
-  ctx.globalCompositeOperation = 'lighter';
-  const glow = ctx.createRadialGradient(cx, baseY + 4, 1, cx, baseY + 4, 14);
-  glow.addColorStop(0, 'rgba(255,230,80,0.85)');
-  glow.addColorStop(0.55, 'rgba(255,200,40,0.35)');
-  glow.addColorStop(1, 'rgba(255,200,40,0)');
-  ctx.fillStyle = glow;
-  ctx.beginPath();
-  ctx.arc(cx, baseY + 4, 14, 0, Math.PI * 2);
-  ctx.fill();
-
-  ctx.globalCompositeOperation = 'source-over';
   // Outline
   ctx.fillStyle = '#1a1200';
   ctx.beginPath();
-  ctx.moveTo(cx, tipY + 1);
-  ctx.lineTo(cx - 8, baseY - 1);
-  ctx.lineTo(cx + 8, baseY - 1);
+  ctx.moveTo(px(cx), px(tipY + 1));
+  ctx.lineTo(px(cx - 8), px(baseY - 1));
+  ctx.lineTo(px(cx + 8), px(baseY - 1));
   ctx.closePath();
   ctx.fill();
 
-  // Main ▼ (points down toward player head)
   ctx.fillStyle = '#ffd54f';
   ctx.beginPath();
-  ctx.moveTo(cx, tipY);
-  ctx.lineTo(cx - 7, baseY);
-  ctx.lineTo(cx + 7, baseY);
+  ctx.moveTo(px(cx), px(tipY));
+  ctx.lineTo(px(cx - 7), px(baseY));
+  ctx.lineTo(px(cx + 7), px(baseY));
   ctx.closePath();
   ctx.fill();
 
-  // Highlight
   ctx.fillStyle = 'rgba(255,255,255,0.65)';
-  ctx.fillRect(Math.round(cx - 1), Math.round(baseY + 1), 2, 3);
+  ctx.fillRect(px(cx - 1), px(baseY + 1), 2, 3);
 
   ctx.restore();
 }
@@ -248,38 +292,38 @@ function drawGoalCell(ctx: CanvasRenderingContext2D, ox: number, oy: number) {
 
 function renderInternal(ctx: CanvasRenderingContext2D, state: GameState, opts: RenderOpts) {
   const { grid } = state;
+  const { cull } = opts;
   ctx.imageSmoothingEnabled = false;
 
-  drawFloor(ctx, grid, state);
+  drawFloor(ctx, grid, state, cull);
 
-  // Bookshelves
-  for (let y = 0; y < GRID_H; y++) {
-    for (let x = 0; x < GRID_W; x++) {
+  const range = cull ? tileRange(cull) : { minGX: 0, maxGX: GRID_W - 1, minGY: 0, maxGY: GRID_H - 1 };
+
+  for (let y = range.minGY; y <= range.maxGY; y++) {
+    for (let x = range.minGX; x <= range.maxGX; x++) {
       if (grid[y][x] === 'S') {
-        drawShelf(ctx, x, y, x * TILE, y * TILE);
+        const loc = state.shelfLocations[shelfLocationKey(x, y)];
+        drawShelf(ctx, x, y, x * TILE, y * TILE, loc);
       }
     }
   }
 
-  // Outer walls
-  for (let y = 0; y < GRID_H; y++) {
-    for (let x = 0; x < GRID_W; x++) {
+  for (let y = range.minGY; y <= range.maxGY; y++) {
+    for (let x = range.minGX; x <= range.maxGX; x++) {
       if (grid[y][x] === 'W') {
         drawWall(ctx, x, y, x * TILE, y * TILE);
       }
     }
   }
 
-  // Goal shutters embedded in wall
-  drawGoals(ctx, state, opts.blink);
+  drawGoals(ctx, state, opts.blink, cull);
 
-  // Player's current target glow (yellow)
   const pt = state.targets[state.currentTarget];
-  if (pt && !pt.done) {
+  if (pt && !pt.done && (!cull || isCellVisible(pt.x, pt.y, cull))) {
     drawTargetGlow(ctx, pt.x, pt.y, opts.blink, COLORS.glow, true);
   }
 
-  if (state.tutorialReachCell) {
+  if (state.tutorialReachCell && (!cull || isCellVisible(state.tutorialReachCell.x, state.tutorialReachCell.y, cull))) {
     drawTargetGlow(
       ctx,
       state.tutorialReachCell.x,
@@ -290,8 +334,8 @@ function renderInternal(ctx: CanvasRenderingContext2D, state: GameState, opts: R
     );
   }
 
-  // CPUs
   for (const rival of state.rivals) {
+    if (cull && !isCellVisible(rival.x, rival.y, cull)) continue;
     drawRival(
       ctx,
       rival.x,
@@ -307,28 +351,42 @@ function renderInternal(ctx: CanvasRenderingContext2D, state: GameState, opts: R
     }
   }
 
-  // Player
-  drawPlayer(ctx, state.player.x, state.player.y, state.player.facing, opts.blink, state.player.stun > 0);
-  if (state.isPicking) {
-    drawPickGauge(ctx, state.player.x, state.player.y, state.pickProgress, COLORS.gauge, COLORS.gaugeLight);
+  if (!cull || isCellVisible(state.player.x, state.player.y, cull)) {
+    drawPlayer(ctx, state.player.x, state.player.y, state.player.facing, opts.blink, state.player.stun > 0);
+    if (state.isPicking) {
+      drawPickGauge(ctx, state.player.x, state.player.y, state.pickProgress, COLORS.gauge, COLORS.gaugeLight);
+    }
   }
 
-  // Collision effect
   if (state.collisionFx > 0 && state.collisionPos) {
-    drawCollisionFx(ctx, state.collisionPos.x, state.collisionPos.y, state.collisionFx);
+    const cp = state.collisionPos;
+    if (!cull || isCellVisible(cp.x, cp.y, cull)) {
+      drawCollisionFx(ctx, cp.x, cp.y, state.collisionFx);
+    }
   }
 }
 
-function drawFloor(ctx: CanvasRenderingContext2D, grid: string[][], state: GameState) {
-  for (let y = 0; y < GRID_H; y++) {
-    for (let x = 0; x < GRID_W; x++) {
+function drawFloor(
+  ctx: CanvasRenderingContext2D,
+  grid: string[][],
+  state: GameState,
+  cull?: CullBounds,
+) {
+  const range = cull ? tileRange(cull) : { minGX: 0, maxGX: GRID_W - 1, minGY: 0, maxGY: GRID_H - 1 };
+
+  for (let y = range.minGY; y <= range.maxGY; y++) {
+    for (let x = range.minGX; x <= range.maxGX; x++) {
       const t = grid[y][x];
       if (t !== 'F' && t !== 'G') continue;
       const ox = x * TILE;
       const oy = y * TILE;
 
       if (t === 'F') {
-        drawPassageFloorTile(ctx, ox, oy, x, y);
+        if (isStartCorridorX(x)) {
+          drawStartCorridorTile(ctx, ox, oy, x, y);
+        } else {
+          drawPassageFloorTile(ctx, ox, oy, x, y);
+        }
       } else {
         drawLegacyFloorBase(ctx, ox, oy, x, y);
       }
@@ -348,7 +406,7 @@ function drawFloor(ctx: CanvasRenderingContext2D, grid: string[][], state: GameS
       }
     }
   }
-  drawMainAisleCenterLine(ctx, TILE);
+  drawMainAisleCenterLine(ctx, TILE, cull?.minX, cull?.maxX);
 }
 
 function drawWall(
@@ -358,53 +416,49 @@ function drawWall(
   ox: number,
   oy: number,
 ) {
-  // Top face — main wall surface
-  const grad = ctx.createLinearGradient(ox, oy, ox, oy + TILE);
-  grad.addColorStop(0, COLORS.wallTopLight);
-  grad.addColorStop(0.5, COLORS.wallTop);
-  grad.addColorStop(1, COLORS.wallTopDark);
-  ctx.fillStyle = grad;
+  const isTop = gy === 0;
+  const isBottom = gy === GRID_H - 1;
+  const isLeft = gx === 0;
+  const isRight = gx === GRID_W - 1;
+
+  ctx.fillStyle = WALL_PIXEL.concrete;
   ctx.fillRect(ox, oy, TILE, TILE);
 
-  // Brick pattern
-  const brickH = 8;
-  const brickW = 16;
-  const offset = (gy % 2) * (brickW / 2);
-  ctx.fillStyle = COLORS.wallMortar;
-  for (let row = 0; row < Math.ceil(TILE / brickH); row++) {
-    const by = oy + row * brickH;
-    ctx.fillRect(ox, by, TILE, 1);
-    for (let col = 0; col < Math.ceil(TILE / brickW) + 1; col++) {
-      const bx = ox + col * brickW - offset;
-      if (bx >= ox && bx < ox + TILE) {
-        ctx.fillRect(bx, by, 1, brickH);
-      }
+  for (let row = 0; row < 6; row++) {
+    const sy = oy + row * 6;
+    ctx.fillStyle = row % 2 === 0 ? WALL_PIXEL.mortar : WALL_PIXEL.concreteHi;
+    ctx.fillRect(ox + 1, sy, TILE - 2, 1);
+  }
+
+  if (isLeft || isRight) {
+    const mx = isLeft ? ox + TILE - 5 : ox;
+    ctx.fillStyle = WALL_PIXEL.metalLo;
+    ctx.fillRect(mx, oy, 5, TILE);
+    ctx.fillStyle = WALL_PIXEL.metalHi;
+    ctx.fillRect(mx + (isLeft ? 3 : 1), oy + 1, 1, TILE - 2);
+    for (let ry = 6; ry < TILE - 4; ry += 10) {
+      ctx.fillStyle = WALL_PIXEL.rivet;
+      ctx.fillRect(mx + 2, oy + ry, 2, 2);
     }
   }
 
-  // Brick shading
-  for (let row = 0; row < Math.ceil(TILE / brickH); row++) {
-    const by = oy + row * brickH + 1;
-    for (let col = 0; col < Math.ceil(TILE / brickW) + 1; col++) {
-      const bx = ox + col * brickW - offset;
-      if (bx >= ox && bx < ox + TILE - 1) {
-        // Top highlight
-        ctx.fillStyle = 'rgba(255,255,255,0.06)';
-        ctx.fillRect(bx + 1, by, brickW - 2, 1);
-        // Bottom shadow
-        ctx.fillStyle = 'rgba(0,0,0,0.12)';
-        ctx.fillRect(bx + 1, by + brickH - 2, brickW - 2, 1);
-      }
-    }
+  if (isTop) {
+    ctx.fillStyle = WALL_PIXEL.beam;
+    ctx.fillRect(ox, oy + TILE - 5, TILE, 5);
+    ctx.fillStyle = WALL_PIXEL.concreteLo;
+    ctx.fillRect(ox, oy + TILE - 2, TILE, 2);
   }
 
-  // Bottom edge — dark base for depth
-  ctx.fillStyle = COLORS.wallSideDark;
-  ctx.fillRect(ox, oy + TILE - 3, TILE, 3);
-  ctx.fillStyle = COLORS.wallEdge;
+  if (isBottom) {
+    ctx.fillStyle = WALL_PIXEL.concreteLo;
+    ctx.fillRect(ox, oy, TILE, 4);
+    ctx.fillStyle = WALL_PIXEL.mortar;
+    ctx.fillRect(ox, oy + 3, TILE, 1);
+  }
+
+  ctx.fillStyle = WALL_PIXEL.concreteLo;
   ctx.fillRect(ox, oy, 1, TILE);
   ctx.fillRect(ox + TILE - 1, oy, 1, TILE);
-  ctx.fillRect(ox, oy, TILE, 1);
 }
 
 function drawShelf(
@@ -413,84 +467,41 @@ function drawShelf(
   gy: number,
   ox: number,
   oy: number,
+  locationNumber?: number,
 ) {
+  drawGroundShadow(ctx, ox + TILE / 2, oy + TILE - 2, 14, 3);
+
   const seed = gx * 23 + gy * 41;
-
-  // Recessed back — dithered shadow
-  ctx.fillStyle = SHELF_PIXEL.backDark;
-  ctx.fillRect(ox, oy, TILE, TILE);
-  for (let py = 2; py < TILE - 2; py++) {
-    for (let px = 2; px < TILE - 2; px++) {
-      if ((px + py + seed) % 5 === 0) {
-        ctx.fillStyle = SHELF_PIXEL.backMid;
-        ctx.fillRect(ox + px, oy + py, 1, 1);
-      } else if ((px * 3 + py + seed) % 11 === 0) {
-        ctx.fillStyle = SHELF_PIXEL.backLight;
-        ctx.fillRect(ox + px, oy + py, 1, 1);
-      }
-    }
-  }
-
   const frame = 3;
   const innerL = ox + frame;
   const innerR = ox + TILE - frame;
   const innerT = oy + frame;
   const innerB = oy + TILE - frame;
 
-  // Outer frame — dark wood border
-  ctx.fillStyle = SHELF_PIXEL.frameDark;
+  ctx.fillStyle = '#1e1610';
   ctx.fillRect(ox, oy, TILE, TILE);
 
-  // Frame face with horizontal grain pixels
-  for (let side = 0; side < 4; side++) {
-    const isH = side < 2;
-    const sy = side === 0 ? oy : oy + TILE - frame;
-    const sx = side === 2 ? ox : ox + TILE - frame;
-    if (isH) {
-      ctx.fillStyle = SHELF_PIXEL.frameMid;
-      ctx.fillRect(ox, sy, TILE, frame);
-      ctx.fillStyle = SHELF_PIXEL.frameLight;
-      ctx.fillRect(ox + 1, sy, TILE - 2, 1);
-      ctx.fillStyle = SHELF_PIXEL.frameHi;
-      ctx.fillRect(ox + 2, sy, TILE - 4, 1);
-      for (let gx2 = 0; gx2 < TILE; gx2 += 4) {
-        ctx.fillStyle = SHELF_PIXEL.grain;
-        ctx.fillRect(ox + gx2, sy + 1, 2, 1);
-      }
-      ctx.fillStyle = SHELF_PIXEL.frameDark;
-      ctx.fillRect(ox, sy + frame - 1, TILE, 1);
-    } else {
-      ctx.fillStyle = SHELF_PIXEL.frameMid;
-      ctx.fillRect(sx, oy, frame, TILE);
-      ctx.fillStyle = SHELF_PIXEL.frameLight;
-      ctx.fillRect(sx, oy + 1, 1, TILE - 2);
-      ctx.fillStyle = SHELF_PIXEL.frameHi;
-      ctx.fillRect(sx + 1, oy + 2, 1, TILE - 4);
-      for (let gy2 = 0; gy2 < TILE; gy2 += 5) {
-        ctx.fillStyle = SHELF_PIXEL.grain;
-        ctx.fillRect(sx + 1, oy + gy2, 1, 2);
-      }
-      ctx.fillStyle = SHELF_PIXEL.frameDark;
-      ctx.fillRect(sx + frame - 1, oy, 1, TILE);
-    }
-  }
+  ctx.fillStyle = SHELF_PIXEL.backMid;
+  ctx.fillRect(ox + frame, oy + frame, TILE - frame * 2, TILE - frame * 2);
 
-  // Horizontal shelf boards (pixel-thick planks)
+  ctx.fillStyle = SHELF_PIXEL.frameDark;
+  ctx.fillRect(ox, oy, TILE, frame);
+  ctx.fillRect(ox, oy + TILE - frame, TILE, frame);
+  ctx.fillRect(ox, oy, frame, TILE);
+  ctx.fillRect(ox + TILE - frame, oy, frame, TILE);
+
+  ctx.fillStyle = SHELF_PIXEL.frameLight;
+  ctx.fillRect(ox + 1, oy + 1, TILE - 2, 1);
+  ctx.fillRect(ox + 1, oy + 1, 1, TILE - 2);
+
   const shelfYs = [oy + 11, oy + 23];
   for (const sy of shelfYs) {
-    ctx.fillStyle = SHELF_PIXEL.boardShadow;
-    ctx.fillRect(innerL, sy, innerR - innerL, 3);
     ctx.fillStyle = SHELF_PIXEL.board;
     ctx.fillRect(innerL, sy, innerR - innerL, 2);
     ctx.fillStyle = SHELF_PIXEL.boardLight;
     ctx.fillRect(innerL, sy, innerR - innerL, 1);
-    for (let px = innerL; px < innerR; px += 6) {
-      ctx.fillStyle = SHELF_PIXEL.grain;
-      ctx.fillRect(px, sy + 1, 3, 1);
-    }
   }
 
-  // Three book rows between shelves
   const rows = [
     { top: innerT, bottom: shelfYs[0] - 1 },
     { top: shelfYs[0] + 3, bottom: shelfYs[1] - 1 },
@@ -504,60 +515,29 @@ function drawShelf(
     while (bx < innerR - 2) {
       const w = 2 + ((seed + r * 7 + bx) % 3);
       if (bx + w >= innerR - 1) break;
-
-      const baseColor = bookColor(gx + bx, gy + r);
-      ctx.fillStyle = baseColor;
+      ctx.fillStyle = bookColor(gx + bx, gy + r);
       ctx.fillRect(bx, top, w, rowH);
-
-      // Spine highlight (left edge, worn leather sheen)
       ctx.fillStyle = COLORS.bookHighlight;
       ctx.fillRect(bx, top, 1, rowH);
-
-      // Spine shadow / depth
       ctx.fillStyle = COLORS.bookShadow;
       ctx.fillRect(bx + w - 1, top, 1, rowH);
-      ctx.fillRect(bx, top + rowH - 1, w, 1);
-
-      // Page edge peek (top)
-      if (rowH > 3) {
-        ctx.fillStyle = SHELF_PIXEL.page;
-        ctx.fillRect(bx + 1, top, w - 2, 1);
-        ctx.fillStyle = 'rgba(255,255,255,0.12)';
-        ctx.fillRect(bx + 1, top + 1, w - 2, 1);
-      }
-
-      // Gold title band on some spines
       if ((seed + bx + r) % 4 === 0 && rowH > 5) {
-        const bandY = top + 2 + ((seed + bx) % Math.max(1, rowH - 5));
         ctx.fillStyle = SHELF_PIXEL.label;
-        ctx.fillRect(bx, bandY, w, 2);
-        ctx.fillStyle = 'rgba(255,255,200,0.4)';
-        ctx.fillRect(bx, bandY, w, 1);
+        ctx.fillRect(bx, top + 2, w, 2);
       }
-
-      // Faded spine lettering dots
-      if (w >= 3 && rowH > 6) {
-        ctx.fillStyle = 'rgba(0,0,0,0.25)';
-        const dotY = top + 3 + ((seed + bx) % (rowH - 5));
-        ctx.fillRect(bx + 1, dotY, 1, 1);
-        if (w >= 4) ctx.fillRect(bx + 2, dotY + 2, 1, 1);
-      }
-
       bx += w + 1;
     }
   }
 
-  // Dust motes and age spots (stay inside tile)
-  for (let i = 0; i < 6; i++) {
-    const dx = ox + 4 + ((seed + i * 13) % (TILE - 8));
-    const dy = oy + 4 + ((seed + i * 19) % (TILE - 8));
-    ctx.fillStyle = i % 2 === 0 ? 'rgba(154,144,128,0.35)' : 'rgba(0,0,0,0.12)';
-    ctx.fillRect(dx, dy, 1, 1);
+  if (locationNumber != null) {
+    ctx.fillStyle = 'rgba(12, 10, 8, 0.72)';
+    ctx.fillRect(ox + 3, oy + TILE - 11, 14, 9);
+    ctx.fillStyle = '#e8dcc0';
+    ctx.font = 'bold 8px monospace';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(String(locationNumber), ox + 5, oy + TILE - 6);
   }
-
-  // Top frame highlight pixel row
-  ctx.fillStyle = SHELF_PIXEL.frameHi;
-  ctx.fillRect(ox + 1, oy + 1, TILE - 2, 1);
 }
 
 function drawTargetGlow(
@@ -573,22 +553,10 @@ function drawTargetGlow(
   const pulse = 0.5 + 0.5 * Math.sin(blink * Math.PI * 2 * (showArrow ? 2.2 : 1.5));
   const rgb = hexToRgb(color);
   const intensity = showArrow ? 1.25 : 0.75;
-  const pad = showArrow ? 4 : 3;
-  const radius = 0.72;
+  const alpha = (0.35 + 0.25 * pulse) * intensity;
 
-  ctx.save();
-  ctx.globalCompositeOperation = 'lighter';
-
-  const grad = ctx.createRadialGradient(
-    ox + TILE / 2, oy + TILE / 2, 2,
-    ox + TILE / 2, oy + TILE / 2, TILE * radius,
-  );
-  grad.addColorStop(0, `rgba(${rgb},${(0.72 + 0.28 * pulse) * intensity})`);
-  grad.addColorStop(0.55, `rgba(${rgb},${(0.32 + 0.18 * pulse) * intensity})`);
-  grad.addColorStop(1, `rgba(${rgb},0)`);
-  ctx.fillStyle = grad;
-  ctx.fillRect(ox - pad, oy - pad, TILE + pad * 2, TILE + pad * 2);
-  ctx.restore();
+  ctx.fillStyle = `rgba(${rgb},${alpha * 0.35})`;
+  ctx.fillRect(ox, oy, TILE, TILE);
 
   ctx.strokeStyle = `rgba(${rgb},${(0.85 + 0.15 * pulse) * intensity})`;
   ctx.lineWidth = showArrow ? 3 : 1.5;
@@ -596,16 +564,9 @@ function drawTargetGlow(
   ctx.strokeRect(ox + 1, oy + 1, TILE - 2, TILE - 2);
   ctx.setLineDash([]);
 
-  // Inner bright rim
   if (showArrow) {
-    ctx.strokeStyle = `rgba(255,255,255,${0.35 + 0.25 * pulse})`;
-    ctx.lineWidth = 1;
-    ctx.strokeRect(ox + 3, oy + 3, TILE - 6, TILE - 6);
-  }
-
-  if (showArrow) {
-    const ax = ox + TILE / 2;
-    const ay = oy - 8 - pulse * 5;
+    const ax = px(ox + TILE / 2);
+    const ay = px(oy - 8 - pulse * 5);
     ctx.fillStyle = color;
     ctx.beginPath();
     ctx.moveTo(ax, ay + 8);
@@ -613,8 +574,6 @@ function drawTargetGlow(
     ctx.lineTo(ax + 6, ay);
     ctx.closePath();
     ctx.fill();
-    ctx.fillStyle = 'rgba(255,255,255,0.55)';
-    ctx.fillRect(ax - 1, ay + 1, 2, 4);
   }
 }
 
@@ -626,9 +585,15 @@ function hexToRgb(hex: string): string {
   return `${r},${g},${b}`;
 }
 
-function drawGoals(ctx: CanvasRenderingContext2D, state: GameState, blink: number) {
+function drawGoals(
+  ctx: CanvasRenderingContext2D,
+  state: GameState,
+  blink: number,
+  cull?: CullBounds,
+) {
   const allPicked = state.currentTarget >= state.targets.length;
   for (const g of state.goals) {
+    if (cull && !isCellVisible(g.x, g.y, cull)) continue;
     drawGoalAt(ctx, g.x, g.y, allPicked, blink);
   }
 }
@@ -644,43 +609,28 @@ function drawGoalAt(
   const oy = gy * TILE;
   const pulse = 0.5 + 0.5 * Math.sin(blink * Math.PI * 2);
 
-  ctx.fillStyle = COLORS.goalDark;
+  ctx.fillStyle = '#2a2e3a';
   ctx.fillRect(ox, oy, TILE, TILE);
+
+  ctx.fillStyle = WALL_PIXEL.metalLo;
+  ctx.fillRect(ox, oy, 4, TILE);
 
   const slatH = 4;
   for (let i = 0; i < Math.floor(TILE / slatH); i++) {
     const sy = oy + 2 + i * slatH;
-    const slatGrad = ctx.createLinearGradient(ox, sy, ox, sy + slatH - 1);
-    slatGrad.addColorStop(0, COLORS.goalLight);
-    slatGrad.addColorStop(0.3, COLORS.goal);
-    slatGrad.addColorStop(0.7, COLORS.goalMetal);
-    slatGrad.addColorStop(1, COLORS.goalMetalDark);
-    ctx.fillStyle = slatGrad;
-    ctx.fillRect(ox + 1, sy, TILE - 2, slatH - 1);
-    if (i % 2 === 1) {
-      ctx.fillStyle = 'rgba(0,0,0,0.08)';
-      ctx.fillRect(ox + 1, sy, TILE - 2, 1);
-    }
+    ctx.fillStyle = i % 2 === 0 ? '#8a7850' : '#6a5c40';
+    ctx.fillRect(ox + 4, sy, TILE - 5, slatH - 1);
+    ctx.fillStyle = '#a89058';
+    ctx.fillRect(ox + 4, sy, TILE - 5, 1);
   }
 
-  ctx.fillStyle = COLORS.goalLight;
-  ctx.fillRect(ox, oy, 2, TILE);
-  ctx.fillStyle = COLORS.goalMetalDark;
-  ctx.fillRect(ox + TILE - 3, oy + TILE / 2 - 2, 2, 4);
+  ctx.fillStyle = WALL_PIXEL.rivet;
+  ctx.fillRect(ox + 1, oy + 8, 2, 2);
+  ctx.fillRect(ox + 1, oy + 22, 2, 2);
 
   if (allPicked) {
-    ctx.save();
-    ctx.globalCompositeOperation = 'lighter';
-    const g = ctx.createRadialGradient(
-      ox + TILE / 2, oy + TILE / 2, 3,
-      ox + TILE / 2, oy + TILE / 2, TILE * 0.9,
-    );
-    g.addColorStop(0, `rgba(255,228,107,${0.5 + 0.3 * pulse})`);
-    g.addColorStop(0.5, `rgba(255,228,107,${0.2 + 0.1 * pulse})`);
-    g.addColorStop(1, 'rgba(255,228,107,0)');
-    ctx.fillStyle = g;
-    ctx.fillRect(ox - 12, oy - 12, TILE + 24, TILE + 24);
-    ctx.restore();
+    ctx.fillStyle = `rgba(201,162,39,${0.2 + 0.15 * pulse})`;
+    ctx.fillRect(ox + 2, oy + 2, TILE - 3, TILE - 4);
   }
 }
 
@@ -717,12 +667,12 @@ function drawCharacter(
   who: 'player' | 'rival',
   opts?: CharacterDrawOpts,
 ) {
-  const cx = gx * TILE + TILE / 2;
-  const cy = gy * TILE + TILE / 2;
+  const cx = px(gx * TILE + TILE / 2);
+  const cy = px(gy * TILE + TILE / 2);
   const moving = opts?.moving ?? false;
   const walkSpeed = moving ? 2.2 : 1.2;
   const wob = Math.sin(blink * Math.PI * 2 * walkSpeed + (who === 'rival' ? 1 : 0)) * (moving ? 2 : 1.2);
-  const oy = wob * 0.25;
+  const oy = px(wob * 0.25);
   const squash = opts?.squash ?? 1;
 
   ctx.save();
@@ -735,7 +685,6 @@ function drawCharacter(
       ? RIVAL_PALETTE[(opts?.rivalIndex ?? 0) % RIVAL_PALETTE.length]
       : null;
   const body = who === 'player' ? COLORS.player : palette!.body;
-  const bodyLight = who === 'player' ? COLORS.playerLight : palette!.light;
   const bodyDark = who === 'player' ? COLORS.playerDark : palette!.dark;
   const outline = who === 'player' ? COLORS.playerOutline : palette!.outline;
   const stunColor = who === 'player' ? COLORS.playerStun : palette!.stun;
@@ -743,107 +692,57 @@ function drawCharacter(
   const pushThrough = opts?.pushThrough && who === 'player' && !stunned;
 
   if (speedBoost && moving) {
-    ctx.save();
     ctx.globalAlpha = 0.28;
-    const trailDx =
-      facing === 'left' ? 7 : facing === 'right' ? -7 : facing === 'up' ? 0 : 0;
-    const trailDy =
-      facing === 'up' ? 7 : facing === 'down' ? -7 : 0;
+    const trailDx = facing === 'left' ? 7 : facing === 'right' ? -7 : 0;
+    const trailDy = facing === 'up' ? 7 : facing === 'down' ? -7 : 0;
     ctx.fillStyle = '#7ae5ff';
-    ctx.fillRect(Math.round(cx + trailDx - 9), Math.round(cy + oy + trailDy - 8), 18, 16);
-    ctx.globalAlpha = 0.16;
-    ctx.fillRect(Math.round(cx + trailDx * 1.6 - 9), Math.round(cy + oy + trailDy * 1.6 - 8), 18, 16);
-    ctx.restore();
+    ctx.fillRect(px(cx + trailDx - 9), px(cy + oy + trailDy - 8), 18, 16);
+    ctx.globalAlpha = 1;
   }
 
   if (pushThrough) {
-    ctx.save();
     const pulse = 0.5 + 0.5 * Math.sin(blink * Math.PI * 3);
     ctx.strokeStyle = `rgba(255,90,80,${0.55 + 0.35 * pulse})`;
     ctx.lineWidth = 2.5;
     ctx.beginPath();
     ctx.arc(cx, cy + oy, 18 + pulse * 2, 0, Math.PI * 2);
     ctx.stroke();
-    ctx.strokeStyle = `rgba(255,160,140,${0.35 + 0.2 * pulse})`;
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.arc(cx, cy + oy, 14, 0, Math.PI * 2);
-    ctx.stroke();
-    const barrier = ctx.createRadialGradient(cx, cy + oy, 8, cx, cy + oy, 22);
-    barrier.addColorStop(0, 'rgba(255,80,70,0.08)');
-    barrier.addColorStop(1, `rgba(255,40,40,${0.22 * pulse})`);
-    ctx.fillStyle = barrier;
-    ctx.beginPath();
-    ctx.arc(cx, cy + oy, 22, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
   }
 
   if (speedBoost) {
-    ctx.save();
-    ctx.globalCompositeOperation = 'lighter';
     const pulse = 0.55 + 0.45 * Math.sin(blink * Math.PI * 5);
-    const aura = ctx.createRadialGradient(cx, cy + oy, 2, cx, cy + oy, 24);
-    aura.addColorStop(0, `rgba(180,255,255,${0.65 * pulse})`);
-    aura.addColorStop(0.55, `rgba(59,212,255,${0.3 * pulse})`);
-    aura.addColorStop(1, 'rgba(59,212,255,0)');
-    ctx.fillStyle = aura;
-    ctx.beginPath();
-    ctx.arc(cx, cy + oy, 22, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = `rgba(255,255,255,${0.45 * pulse})`;
+    ctx.strokeStyle = `rgba(59,212,255,${0.45 * pulse})`;
     ctx.lineWidth = 2;
-    for (let i = 0; i < 4; i++) {
-      const ang = blink * 4 + i * (Math.PI / 2);
-      ctx.beginPath();
-      ctx.moveTo(cx + Math.cos(ang) * 12, cy + oy + Math.sin(ang) * 8);
-      ctx.lineTo(cx + Math.cos(ang) * 20, cy + oy + Math.sin(ang) * 14);
-      ctx.stroke();
-    }
-    ctx.restore();
+    ctx.beginPath();
+    ctx.arc(cx, cy + oy, 20, 0, Math.PI * 2);
+    ctx.stroke();
   }
 
-  // Shadow
-  ctx.fillStyle = COLORS.shadow;
-  ctx.beginPath();
-  ctx.ellipse(cx, gy * TILE + TILE - 4, 11, 4, 0, 0, Math.PI * 2);
-  ctx.fill();
+  // Shadow under feet
+  drawGroundShadow(ctx, cx, gy * TILE + TILE - 3, 10, 3);
 
-  // Legs
+  // Legs under body
   ctx.fillStyle = bodyDark;
-  ctx.fillRect(Math.round(cx - 6), Math.round(cy + 6 + oy), 4, 5);
-  ctx.fillRect(Math.round(cx + 2), Math.round(cy + 6 + oy), 4, 5);
-  // Feet
-  ctx.fillStyle = outline;
-  ctx.fillRect(Math.round(cx - 6), Math.round(cy + 10 + oy), 4, 2);
-  ctx.fillRect(Math.round(cx + 2), Math.round(cy + 10 + oy), 4, 2);
+  ctx.fillRect(px(cx - 6), px(cy + 6 + oy), 4, 5);
+  ctx.fillRect(px(cx + 2), px(cy + 6 + oy), 4, 5);
 
-  // Body — rounded rect with gradient
-  const bx = cx - 9;
-  const by = cy - 9 + oy;
+  const bx = px(cx - 9);
+  const by = px(cy - 9 + oy);
   const bw = 18;
   const bh = 16;
-  const bodyGrad = ctx.createLinearGradient(bx, by, bx, by + bh);
-  if (speedBoost) {
-    bodyGrad.addColorStop(0, '#b8ffff');
-    bodyGrad.addColorStop(0.5, '#5ee8ff');
-    bodyGrad.addColorStop(1, '#2ab8e8');
-  } else {
-    bodyGrad.addColorStop(0, bodyLight);
-    bodyGrad.addColorStop(0.5, body);
-    bodyGrad.addColorStop(1, bodyDark);
-  }
-  ctx.fillStyle = stunned ? stunColor : bodyGrad;
+  ctx.fillStyle = stunned ? stunColor : speedBoost ? '#5ee8ff' : body;
   roundRectFill(ctx, bx, by, bw, bh, 4);
 
-  // Body outline
   ctx.strokeStyle = outline;
   ctx.lineWidth = 1;
   roundRectStroke(ctx, bx, by, bw, bh, 4);
 
-  // Belt
+  ctx.fillStyle = outline;
+  ctx.fillRect(px(cx - 6), px(cy + 10 + oy), 4, 2);
+  ctx.fillRect(px(cx + 2), px(cy + 10 + oy), 4, 2);
+
   ctx.fillStyle = bodyDark;
-  roundRectFill(ctx, bx, cy + 3 + oy, bw, 4, 2);
+  roundRectFill(ctx, bx, px(cy + 3 + oy), bw, 4, 2);
   ctx.fillStyle = outline;
   ctx.fillRect(Math.round(cx - 1), Math.round(cy + 3 + oy), 2, 4);
 
@@ -988,17 +887,11 @@ function drawPickGauge(
     roundRectStroke(ctx, ox - 1, oy - 1, w + 2, h + 2, 3);
   }
 
-  // Fill with gradient
+  // Fill — flat color
   const fillW = Math.round((w - 2) * Math.min(1, progress));
   if (fillW > 0) {
-    const fillGrad = ctx.createLinearGradient(ox, oy, ox, oy + h);
-    fillGrad.addColorStop(0, colorLight);
-    fillGrad.addColorStop(1, color);
-    ctx.fillStyle = fillGrad;
+    ctx.fillStyle = color;
     ctx.fillRect(ox + 1, oy + 1, fillW, h - 2);
-    // Shine
-    ctx.fillStyle = 'rgba(255,255,255,0.3)';
-    ctx.fillRect(ox + 1, oy + 1, fillW, 1);
   }
 
   // Border
@@ -1013,61 +906,19 @@ function drawCollisionFx(
   gy: number,
   timer: number,
 ) {
-  const cx = gx * TILE + TILE / 2;
-  const cy = gy * TILE + TILE / 2;
+  const cx = px(gx * TILE + TILE / 2);
+  const cy = px(gy * TILE + TILE / 2);
   const t = timer / 600;
-  const radius = (1 - t) * TILE * 0.9;
-  const ringPulse = 0.6 + 0.4 * Math.sin(t * Math.PI * 4);
+  const radius = px((1 - t) * TILE * 0.9);
 
-  ctx.save();
-  ctx.globalCompositeOperation = 'lighter';
-
-  // Impact ring
-  ctx.strokeStyle = `rgba(255,200,120,${t * ringPulse})`;
-  ctx.lineWidth = 3 * t;
+  ctx.strokeStyle = `rgba(255,200,120,${t})`;
+  ctx.lineWidth = 2;
   ctx.beginPath();
   ctx.arc(cx, cy, radius * 0.55, 0, Math.PI * 2);
   ctx.stroke();
 
-  // Central flash
-  const flashGrad = ctx.createRadialGradient(cx, cy, 1, cx, cy, radius);
-  flashGrad.addColorStop(0, `rgba(255,255,255,${t * 0.6})`);
-  flashGrad.addColorStop(0.3, `rgba(255,240,200,${t * 0.3})`);
-  flashGrad.addColorStop(1, 'rgba(255,200,100,0)');
-  ctx.fillStyle = flashGrad;
-  ctx.fillRect(cx - radius - 4, cy - radius - 4, radius * 2 + 8, radius * 2 + 8);
-
-  // Star burst ring
-  ctx.strokeStyle = `rgba(255,255,255,${t})`;
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-  ctx.stroke();
-
-  // Spark lines
-  for (let i = 0; i < 10; i++) {
-    const angle = (i / 10) * Math.PI * 2 + t * 2;
-    const r1 = radius * 0.4;
-    const r2 = radius * 1.15;
-    ctx.strokeStyle = `rgba(255,255,200,${t * 0.8})`;
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.moveTo(cx + Math.cos(angle) * r1, cy + Math.sin(angle) * r1);
-    ctx.lineTo(cx + Math.cos(angle) * r2, cy + Math.sin(angle) * r2);
-    ctx.stroke();
-  }
-
-  // Impact stars
-  for (let i = 0; i < 4; i++) {
-    const ang = (i / 4) * Math.PI * 2 + Math.PI / 4;
-    const sx = cx + Math.cos(ang) * radius * 0.7;
-    const sy = cy + Math.sin(ang) * radius * 0.7;
-    ctx.fillStyle = `rgba(255,255,255,${t})`;
-    ctx.fillRect(Math.round(sx - 1), Math.round(sy), 2, 1);
-    ctx.fillRect(Math.round(sx), Math.round(sy - 1), 1, 2);
-  }
-
-  ctx.restore();
+  ctx.fillStyle = `rgba(255,255,255,${t * 0.35})`;
+  ctx.fillRect(cx - 4, cy - 4, 8, 8);
 }
 
 function roundRectFill(
