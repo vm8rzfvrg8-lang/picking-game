@@ -1,4 +1,5 @@
 import { GRID_W, LEFT_DECOR_COLS, TOP_DECOR_ROWS, TILE } from './constants';
+import { PALETTE, paletteAlpha } from './palette';
 
 /** Place PNG at `public/top-header-bg.png` to replace the dummy background. */
 export const TOP_HEADER_BG_URL = '/top-header-bg.png';
@@ -34,22 +35,22 @@ export function drawTopHeaderBackground(
     return;
   }
 
-  ctx.fillStyle = '#0a0c14';
+  ctx.fillStyle = PALETTE.pixelBlack;
   ctx.fillRect(ox, oy, width, height);
 
-  ctx.fillStyle = '#12151e';
+  ctx.fillStyle = PALETTE.bgDark;
   for (let tx = 0; tx < LEFT_DECOR_COLS + GRID_W; tx++) {
     if (tx % 3 !== 0) continue;
     ctx.fillRect(ox + tx * TILE, oy, TILE, height);
   }
 
-  ctx.fillStyle = 'rgba(140, 150, 170, 0.22)';
+  ctx.fillStyle = paletteAlpha(PALETTE.pixelWhite, 0.22);
   ctx.font = 'bold 10px monospace';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText('top-header-bg.png', ox + width / 2, oy + height / 2 - 6);
   ctx.font = '8px monospace';
-  ctx.fillStyle = 'rgba(140, 150, 170, 0.16)';
+  ctx.fillStyle = paletteAlpha(PALETTE.pixelWhite, 0.16);
   ctx.fillText('(placeholder)', ox + width / 2, oy + height / 2 + 8);
 }
 

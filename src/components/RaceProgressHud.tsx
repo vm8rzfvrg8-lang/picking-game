@@ -1,5 +1,5 @@
 import { Cpu, User } from 'lucide-react';
-import { GameState, RIVAL_PALETTE } from '../game/constants';
+import { GameState, PALETTE, RIVAL_PALETTE } from '../game/constants';
 import { courseProgressAt } from '../game/courseProgress';
 import { isGoalCell } from '../game/levelgen';
 
@@ -13,8 +13,9 @@ interface RacerMarker {
 }
 
 function buildMarkers(game: GameState): RacerMarker[] {
+  const goalCount = game.pickCount;
   const playerAtGoal =
-    game.currentTarget >= game.targets.length &&
+    game.currentTarget >= goalCount &&
     isGoalCell(game.grid, game.player.x, game.player.y);
 
   const markers: RacerMarker[] = [
@@ -23,12 +24,12 @@ function buildMarkers(game: GameState): RacerMarker[] {
       progress: courseProgressAt(game.grid, game.player.x, game.player.y, playerAtGoal),
       score: game.currentTarget,
       isPlayer: true,
-      color: '#3bd4ff',
+      color: PALETTE.uiBlue,
     },
     ...game.rivals.map((rival) => {
       const atGoal =
         rival.reachedGoal ||
-        (rival.currentTarget >= rival.targets.length &&
+        (rival.currentTarget >= goalCount &&
           isGoalCell(game.grid, rival.x, rival.y));
       const palette = RIVAL_PALETTE[rival.id % RIVAL_PALETTE.length];
       return {
@@ -54,6 +55,7 @@ interface Props {
 
 export function RaceProgressHud({ game }: Props) {
   const markers = buildMarkers(game);
+  const goalCount = game.pickCount;
 
   return (
     <div className="game-race-hud" aria-label="コース進行状況">
@@ -70,7 +72,9 @@ export function RaceProgressHud({ game }: Props) {
                 className={m.isPlayer ? 'race-marker race-marker--player' : 'race-marker'}
                 style={{ left: `${m.progress * 100}%` }}
               >
-                <span className="race-marker-score">{m.score}</span>
+                <span className="race-marker-score">
+                  {m.isPlayer ? `${m.score}/${goalCount}` : m.score}
+                </span>
                 <div
                   className="race-marker-icon-wrap"
                   style={m.isPlayer ? undefined : { borderColor: m.color }}

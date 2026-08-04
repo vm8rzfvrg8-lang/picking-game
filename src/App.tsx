@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { GameState, DEFAULT_CPU_COUNT, PLAYER_COOLDOWN_MS, TILE } from './game/constants';
+import { GameState, DEFAULT_CPU_COUNT, DEFAULT_PICK_COUNT, PLAYER_COOLDOWN_MS, TILE } from './game/constants';
 import { getComboCanvasColor, getComboMoveCooldown } from './game/combo';
 import { computeCameraTransform, cullBoundsFromCamera, gridDecorOffset, type CameraState } from './game/camera';
 import { Difficulty } from './game/difficulty';
@@ -22,6 +22,14 @@ import { TutorialScene } from './components/TutorialScene';
 import { GameplayTopBar } from './components/GameplayTopBar';
 import { RaceProgressHud } from './components/RaceProgressHud';
 import { ComboHud } from './components/ComboHud';
+import { CountdownOverlay } from './components/CountdownOverlay';
+import {
+  COUNTDOWN_GO_HOLD_MS,
+  COUNTDOWN_STEP_MS,
+  COUNTDOWN_STEPS,
+  type CountdownLabel,
+  isGoLabel,
+} from './game/countdown';
 import { loadBreakRoomBackground } from './game/breakRoomBackground';
 import { loadTopHeaderBackground } from './game/topHeaderBackground';
 import { SkillButton } from './components/SkillButton';
@@ -43,8 +51,10 @@ import { lerp } from './game/anim';
 import {
   createVfx,
   drawVfx,
+  drawPickAbsorbVfx,
   drawTrailMarks,
   drawSkillBurst,
+  getHarvestCharacterFx,
   getShakeOffset,
   resetVfx,
   triggerCollisionShake,
@@ -54,6 +64,9 @@ import {
   triggerSkillActivate,
   triggerTrailMark,
   triggerWinBurst,
+  triggerCountdownPulse,
+  triggerRaceGoBurst,
+  countdownBurstOrigin,
   updateVfx,
   type VfxState,
 } from './game/vfx';
@@ -85,11 +98,12 @@ export default function App() {
   const kbRef = useKeyboardInput();
 
   const [game, setGame] = useState<GameState>(() => {
-    const g = newGame(undefined, 'normal', SkillType.SuperSpeed, DEFAULT_CPU_COUNT);
+    const g = newGame(undefined, 'normal', SkillType.SuperSpeed, DEFAULT_CPU_COUNT, DEFAULT_PICK_COUNT);
     return g;
   });
   const [difficulty, setDifficulty] = useState<Difficulty>('normal');
   const [cpuCount, setCpuCount] = useState(DEFAULT_CPU_COUNT);
+  const [pickCount, setPickCount] = useState(DEFAULT_PICK_COUNT);
   const [selectedSkill, setSelectedSkill] = useState<SkillType>(SkillType.SuperSpeed);
   const gameRef = useRef(game);
   gameRef.current = game;
@@ -115,6 +129,56 @@ export default function App() {
   const vfxRef = useRef<VfxState>(createVfx());
   const goalFxDoneRef = useRef(false);
   const skillUseRef = useRef(false);
+
+  const [countdownLabel, setCountdownLabel] = useState<CountdownLabel | null>(null);
+  const [countdownAnimKey, setCountdownAnimKey] = useState(0);
+  const countdownActiveRef = useRef(false);
+  const countdownTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  const clearCountdownTimers = useCallback(() => {
+    for (const t of countdownTimersRef.current) clearTimeout(t);
+    countdownTimersRef.current = [];
+  }, []);
+
+  const startRaceCountdown = useCallback(() => {
+    clearCountdownTimers();
+    countdownActiveRef.current = true;
+    setCountdownLabel(null);
+
+    COUNTDOWN_STEPS.forEach((step, i) => {
+      const timer = setTimeout(() => {
+        setCountdownLabel(step);
+        setCountdownAnimKey((k) => k + 1);
+        const vfx = vfxRef.current;
+        if (isGoLabel(step)) {
+          countdownActiveRef.current = false;
+          triggerCountdownPulse(vfx, true);
+          const cam = cameraRef.current;
+          const { width: viewW, height: viewH } = viewportRef.current;
+          const origin = countdownBurstOrigin(
+            cam.cameraX,
+            cam.cameraY,
+            cam.scale,
+            viewW,
+            viewH,
+          );
+          triggerRaceGoBurst(vfx, origin.x, origin.y);
+          sfx.raceGo();
+        } else {
+          triggerCountdownPulse(vfx, false);
+          sfx.countdownTick();
+        }
+      }, i * COUNTDOWN_STEP_MS);
+      countdownTimersRef.current.push(timer);
+    });
+
+    const hideDelay = (COUNTDOWN_STEPS.length - 1) * COUNTDOWN_STEP_MS + COUNTDOWN_GO_HOLD_MS;
+    const hideTimer = setTimeout(() => {
+      setCountdownLabel(null);
+      countdownActiveRef.current = false;
+    }, hideDelay);
+    countdownTimersRef.current.push(hideTimer);
+  }, [clearCountdownTimers]);
 
   // Current effective input (keyboard OR touch)
   const touchDirRef = useRef<Direction | null>(null);
@@ -177,7 +241,10 @@ export default function App() {
   }, []);
 
   const resetGame = useCallback(() => {
-    const g = newGame(undefined, difficulty, selectedSkill, cpuCount);
+    clearCountdownTimers();
+    countdownActiveRef.current = false;
+    setCountdownLabel(null);
+    const g = newGame(undefined, difficulty, selectedSkill, cpuCount, pickCount);
     setGame(g);
     gameRef.current = g;
     playerVisualRef.current = { x: g.player.x, y: g.player.y };
@@ -188,19 +255,19 @@ export default function App() {
     touchDirRef.current = null;
     resetVfx(vfxRef.current);
     goalFxDoneRef.current = false;
-  }, [difficulty, selectedSkill, cpuCount]);
+  }, [difficulty, selectedSkill, cpuCount, pickCount, clearCountdownTimers]);
 
   const beginTutorial = useCallback(() => {
     unlockAudio();
     tutorialStatsRef.current = createTutorialStats();
     const startCallbacks = startTutorial();
-    const g = enterTutorial(newGame(undefined, difficulty, selectedSkill, 1));
+    const g = enterTutorial(newGame(undefined, difficulty, selectedSkill, 1, pickCount));
     gameRef.current = g;
     moveCdRef.current = 0;
     resetVfx(vfxRef.current);
     goalFxDoneRef.current = false;
     applyTutorialLayout(startCallbacks);
-  }, [difficulty, selectedSkill, startTutorial, applyTutorialLayout]);
+  }, [difficulty, selectedSkill, startTutorial, applyTutorialLayout, pickCount]);
 
   const handleQuitTutorial = useCallback(() => {
     resetTutorialManager();
@@ -210,8 +277,7 @@ export default function App() {
 
   const beginGame = useCallback(() => {
     unlockAudio();
-    sfx.start();
-    const g = startPlaying(newGame(undefined, difficulty, selectedSkill, cpuCount));
+    const g = startPlaying(newGame(undefined, difficulty, selectedSkill, cpuCount, pickCount));
     gameRef.current = g;
     playerVisualRef.current = { x: g.player.x, y: g.player.y };
     rivalVisualRefs.current = {};
@@ -221,7 +287,8 @@ export default function App() {
     resetVfx(vfxRef.current);
     goalFxDoneRef.current = false;
     setGame(g);
-  }, [difficulty, selectedSkill, cpuCount]);
+    startRaceCountdown();
+  }, [difficulty, selectedSkill, cpuCount, pickCount, startRaceCountdown]);
 
   const toggleMute = useCallback(() => {
     setMutedState((m) => {
@@ -242,11 +309,6 @@ export default function App() {
     const tutorialInputActive = !isTutorial || tutorialPhase === 'active';
     const tutorialSimActive =
       !isTutorial || tutorialPhase === 'active' || tutorialPhase === 'clearPending';
-    updateVfx(
-      vfx,
-      dtMs,
-      g.phase === 'playing' || (isTutorial && (tutorialInputActive || tutorialPhase === 'clearPending')),
-    );
 
     // Smooth visual lerp toward logical positions
     const pv = playerVisualRef.current;
@@ -269,13 +331,16 @@ export default function App() {
     }
 
     if (g.phase === 'playing' || (isTutorial && tutorialSimActive)) {
-      if (tutorialInputActive) {
+      const countdownFrozen = countdownActiveRef.current;
+
+      if (tutorialInputActive && !countdownFrozen) {
         moveCdRef.current += dtMs;
       }
 
       const kb = kbRef.current;
-      const dir = tutorialInputActive ? touchDirRef.current ?? kb.dir : null;
-      const pick = tutorialInputActive ? isPickInput(g, dir) : false;
+      const dir =
+        tutorialInputActive && !countdownFrozen ? touchDirRef.current ?? kb.dir : null;
+      const pick = tutorialInputActive && !countdownFrozen ? isPickInput(g, dir) : false;
       const moveCooldown = getComboMoveCooldown(
         getSuperSpeedMoveCooldown(PLAYER_COOLDOWN_MS, g.skills),
         g.pickCombo,
@@ -285,6 +350,7 @@ export default function App() {
       skillUseRef.current = false;
       if (
         tutorialInputActive &&
+        !countdownFrozen &&
         !pick &&
         moveCdRef.current >= moveCooldown &&
         dir &&
@@ -295,7 +361,9 @@ export default function App() {
         moveCdRef.current = 0;
       }
 
-      const res = step(g, input, dtMs);
+      const res = countdownFrozen
+        ? { state: g, events: [] as const }
+        : step(g, input, dtMs);
       for (const ev of res.events) {
         if (ev.type === 'move') {
           triggerTrailMark(vfx, ev.fromX, ev.fromY, ev.dir);
@@ -304,7 +372,7 @@ export default function App() {
         else if (ev.type === 'pickDone' && ev.who === 'player') {
           sfx.pickup();
           const t = res.state.targets[ev.index];
-          if (t) triggerPickComplete(vfx, t.x, t.y, 'player', t.locationNumber);
+          if (t) triggerPickComplete(vfx, t.x, t.y, 'player');
         } else if (ev.type === 'pickCombo') {
           triggerComboPop(vfx, res.state.player.x, res.state.player.y, ev.combo);
         } else if (ev.type === 'pickDone' && ev.who === 'rival') {
@@ -312,7 +380,7 @@ export default function App() {
           const rival =
             res.state.rivals.find((r) => r.id === ev.entityId) ?? res.state.rivals[0];
           const t = rival?.targets[ev.index];
-          if (t) triggerPickComplete(vfx, t.x, t.y, 'rival', t.locationNumber);
+          if (t) triggerPickComplete(vfx, t.x, t.y, 'rival', rival?.id);
         } else if (ev.type === 'collision') {
           sfx.collision();
           if (ev.involvesPlayer) {
@@ -332,7 +400,7 @@ export default function App() {
         } else if (ev.type === 'lose') sfx.bump();
       }
       if (
-        res.state.currentTarget >= res.state.targets.length &&
+        res.state.currentTarget >= res.state.pickCount &&
         !goalFxDoneRef.current &&
         res.state.phase === 'playing'
       ) {
@@ -382,6 +450,16 @@ export default function App() {
       }
     }
 
+    updateVfx(
+      vfx,
+      dtMs,
+      g.phase === 'playing' || (isTutorial && (tutorialInputActive || tutorialPhase === 'clearPending')),
+      {
+        player: playerVisualRef.current,
+        rivals: rivalVisualRefs.current,
+      },
+    );
+
     // Render
     const canvas = canvasRef.current;
     if (canvas) {
@@ -409,6 +487,14 @@ export default function App() {
             playerVisualRef.current,
             rivalVisualRefs.current,
             blinkRef.current,
+            vfxRef.current,
+          );
+          drawPickAbsorbVfx(
+            ctx,
+            vfxRef.current,
+            playerVisualRef.current,
+            rivalVisualRefs.current,
+            cull,
           );
           drawTrailMarks(ctx, vfxRef.current, cull);
           drawSkillBurst(
@@ -454,6 +540,7 @@ export default function App() {
 
   const handleUseSkill = useCallback(() => {
     const g = gameRef.current;
+    if (countdownActiveRef.current) return;
     if (g.phase !== 'playing' && g.phase !== 'tutorial') return;
     if (g.phase === 'tutorial' && g.tutorialSubStep === 0) return;
     if (!isSkillReady(g.skills)) return;
@@ -487,7 +574,8 @@ export default function App() {
   useEffect(() => {
     loadBreakRoomBackground();
     loadTopHeaderBackground();
-  }, []);
+    return () => clearCountdownTimers();
+  }, [clearCountdownTimers]);
 
   const handleTouchDir = useCallback((d: Direction | null) => {
     touchDirRef.current = d;
@@ -532,6 +620,9 @@ export default function App() {
         </div>
 
         {game.phase === 'playing' && <RaceProgressHud game={game} />}
+        {game.phase === 'playing' && (
+          <CountdownOverlay label={countdownLabel} animKey={countdownAnimKey} />
+        )}
         {(game.phase === 'playing' || game.phase === 'tutorial') && (
           <ComboHud game={game} />
         )}
@@ -557,6 +648,8 @@ export default function App() {
           <StartScreen
             difficulty={difficulty}
             cpuCount={cpuCount}
+            pickCount={pickCount}
+            onPickCountChange={setPickCount}
             selectedSkill={selectedSkill}
             onDifficultyChange={setDifficulty}
             onCpuCountChange={setCpuCount}
@@ -577,6 +670,7 @@ function drawSmoothEntities(
   playerVisual: { x: number; y: number },
   rivalVisuals: Record<number, { x: number; y: number }>,
   blink: number,
+  vfx: VfxState,
 ) {
   eraseFloorCell(ctx, state, state.player.x, state.player.y);
   eraseFloorCell(ctx, state, Math.round(playerVisual.x), Math.round(playerVisual.y));
@@ -589,10 +683,13 @@ function drawSmoothEntities(
     const rMoving =
       Math.abs(rivalVisual.x - rival.x) > 0.04 || Math.abs(rivalVisual.y - rival.y) > 0.04;
 
+    const rHarvest = getHarvestCharacterFx(vfx, 'rival', rival.id);
+    const ry = rivalVisual.y + rHarvest.yOffsetPx / TILE;
+
     drawCharacterAt(
       ctx,
       rivalVisual.x,
-      rivalVisual.y,
+      ry,
       rival.facing,
       blink,
       rival.stun > 0,
@@ -605,28 +702,31 @@ function drawSmoothEntities(
       },
     );
     if (rival.isPicking) {
-      drawPickGaugeAt(ctx, rivalVisual.x, rivalVisual.y, rival.pickProgress, 'rival');
+      drawPickGaugeAt(ctx, rivalVisual.x, ry, rival.pickProgress, 'rival');
     }
   }
+
+  const pHarvest = getHarvestCharacterFx(vfx, 'player');
+  const py = playerVisual.y + pHarvest.yOffsetPx / TILE;
 
   const pMoving =
     Math.abs(playerVisual.x - state.player.x) > 0.04 || Math.abs(playerVisual.y - state.player.y) > 0.04;
 
-  drawCharacterAt(ctx, playerVisual.x, playerVisual.y, state.player.facing, blink, state.player.stun > 0, 'player', {
+  drawCharacterAt(ctx, playerVisual.x, py, state.player.facing, blink, state.player.stun > 0, 'player', {
     moving: pMoving,
     squash: pMoving ? 0.9 : 1,
     speedBoost: isSuperSpeedActive(state.skills) || state.pickCombo > 0,
     pushThrough: isPushThroughActive(state.skills),
   });
   if (state.isPicking) {
-    drawPickGaugeAt(ctx, playerVisual.x, playerVisual.y, state.pickProgress, 'player');
+    drawPickGaugeAt(ctx, playerVisual.x, py, state.pickProgress, 'player');
   }
 
   if (state.pickCombo > 0) {
-    drawComboFloater(ctx, playerVisual.x, playerVisual.y, state.pickCombo, blink);
+    drawComboFloater(ctx, playerVisual.x, py, state.pickCombo, blink);
   }
 
-  drawPlayerMarkerAt(ctx, playerVisual.x, playerVisual.y, blink);
+  drawPlayerMarkerAt(ctx, playerVisual.x, py, blink);
 
   if (state.collisionFx > 0 && state.collisionPos) {
     drawCollisionFxAt(ctx, state.collisionPos.x, state.collisionPos.y, state.collisionFx);

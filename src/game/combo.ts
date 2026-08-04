@@ -1,4 +1,4 @@
-import { PLAYER_COOLDOWN_MS } from './constants';
+import { PLAYER_COOLDOWN_MS, PALETTE } from './constants';
 
 /** Max time between picks to maintain combo (ms). */
 export const COMBO_WINDOW_MS = 5000;
@@ -56,10 +56,10 @@ export function registerPickComboSuccess(
 }
 
 const COMBO_DISPLAY_COLORS: Record<number, string> = {
-  1: '#00BFFF',
-  2: '#00FF7F',
-  3: '#FF3333',
-  4: '#A855F7',
+  1: PALETTE.uiBlue,
+  2: PALETTE.glowGreen,
+  3: PALETTE.glowRed,
+  4: '#a855f7',
 };
 
 export function isRainbowCombo(combo: number): boolean {
@@ -67,8 +67,8 @@ export function isRainbowCombo(combo: number): boolean {
 }
 
 export function getComboDisplayColor(combo: number): string {
-  if (isRainbowCombo(combo)) return '#FFFFFF';
-  return COMBO_DISPLAY_COLORS[combo] ?? '#00BFFF';
+  if (isRainbowCombo(combo)) return PALETTE.pixelWhite;
+  return COMBO_DISPLAY_COLORS[combo] ?? PALETTE.uiBlue;
 }
 
 /** Canvas / VFX color — rainbow hue cycles when combo ≥ 5. */

@@ -1,50 +1,84 @@
-import { Trophy, Skull, RotateCcw } from 'lucide-react';
-import { GameState } from '../game/constants';
-import { getDifficultyConfig } from '../game/difficulty';
+import { RotateCcw } from 'lucide-react';
+import type { GameState } from '../game/constants';
+import {
+  computePlayerRank,
+  computeTotalCoins,
+  formatRankLabel,
+} from '../game/result';
+import { useCountUp } from '../hooks/useCountUp';
 
 interface Props {
   game: GameState;
   onRestart: () => void;
 }
 
+const CELEBRATION_SPARKS = 24;
+
 export function ResultOverlay({ game, onRestart }: Props) {
   const won = game.phase === 'won';
-  const color = won ? '#ffe46b' : '#ff5a5a';
-  const seconds = (game.elapsed / 1000).toFixed(1);
-  const cpuLabel = getDifficultyConfig(game.difficulty).shortLabel;
+  const rank = computePlayerRank(game);
+  const isFirst = rank === 1;
+  const maxCombo = game.maxPickCombo;
+  const totalCoins = computeTotalCoins(rank, maxCombo);
+
+  const active = game.phase === 'won' || game.phase === 'lost';
+
+  const comboDisplay = useCountUp(maxCombo, active, 680, 320);
+  const coinsDisplay = useCountUp(totalCoins, active, 900, 820);
+
+  const rankColor = isFirst
+    ? 'var(--color-caution-yellow)'
+    : won
+      ? 'var(--color-ui-blue)'
+      : 'var(--color-glow-red)';
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-[#0c1020]/90 backdrop-blur-sm p-3 sm:p-4">
-      <div
-        className="my-auto w-[min(440px,96vw)] rounded-2xl border-2 p-6 text-center text-white sm:p-8"
-        style={{ borderColor: color, background: '#121a33', boxShadow: `0 0 50px ${color}55` }}
-      >
-        {won ? (
-          <Trophy className="mx-auto mb-3 h-14 w-14" style={{ color }} />
-        ) : (
-          <Skull className="mx-auto mb-3 h-14 w-14" style={{ color }} />
-        )}
-        <h2
-          className="mb-2 text-2xl font-black"
-          style={{ fontFamily: '"Press Start 2P", monospace', color }}
-        >
-          {won ? 'CLEAR!' : 'GAME OVER'}
-        </h2>
-        <p className="mb-1 text-sm text-[#9fb0d8]">
-          {won
-            ? 'ライバルに勝ち越した! 図書館を脱出!'
-            : 'ライバルに先を越された…'}
-        </p>
-        <p className="mb-6 text-xs text-[#5a6a8d]">
-          記録: {seconds}s / CPU: {cpuLabel}
-        </p>
-        <button
-          onClick={onRestart}
-          className="inline-flex items-center gap-2 rounded-lg px-6 py-3 font-black text-[#0c1020] transition hover:scale-[1.03]"
-          style={{ background: color, fontFamily: '"Press Start 2P", monospace' }}
-        >
-          <RotateCcw className="h-4 w-4" />
-          もう一回
+    <div className="result-overlay" role="dialog" aria-modal="true" aria-labelledby="result-title">
+      {isFirst && won && (
+        <div className="result-celebration" aria-hidden>
+          {Array.from({ length: CELEBRATION_SPARKS }, (_, i) => (
+            <span key={i} className="result-celebration-particle" style={{ ['--p-i' as string]: i }} />
+          ))}
+        </div>
+      )}
+
+      <div className="result-dialog">
+        <header className="result-header">
+          <p id="result-title" className="result-title" style={{ color: rankColor }}>
+            {won ? 'GOAL!' : 'RACE OVER'}
+          </p>
+        </header>
+
+        <dl className="result-stats">
+          <div className="result-stat">
+            <dt>Rank</dt>
+            <dd>
+              <span className="result-stat-value result-stat-value--rank" style={{ color: rankColor }}>
+                {formatRankLabel(rank)}
+              </span>
+            </dd>
+          </div>
+          <div className="result-stat">
+            <dt>Max Combo</dt>
+            <dd>
+              <span className="result-stat-value result-stat-value--combo">{comboDisplay}</span>
+              <span className="result-stat-unit">COMBO</span>
+            </dd>
+          </div>
+          <div className="result-stat result-stat--coins">
+            <dt>Coins</dt>
+            <dd>
+              <span className="result-coin-icon" aria-hidden>
+                ◎
+              </span>
+              <span className="result-stat-value result-stat-value--coins">{coinsDisplay}</span>
+            </dd>
+          </div>
+        </dl>
+
+        <button type="button" className="result-replay-btn" onClick={onRestart}>
+          <RotateCcw className="result-replay-icon" aria-hidden />
+          もう一度遊ぶ
         </button>
       </div>
     </div>

@@ -1,4 +1,4 @@
-import { GRID_H, GRID_W, PICK_COUNT, PickTarget, Tile } from './constants';
+import { GRID_H, GRID_W, PickTarget, Tile } from './constants';
 
 /** Main aisle rows (2-wide, left-side traffic). */
 export const MAIN_AISLE_Y_TOP = 6;
@@ -289,6 +289,7 @@ export function assignTargets(
   shelfCells: { x: number; y: number }[],
   shelfLocations: Record<string, number>,
   rng: Rng,
+  pickCount: number,
 ): PickTarget[] {
   const candidates = shelfCells
     .map((s) => ({
@@ -303,7 +304,7 @@ export function assignTargets(
     [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
   }
 
-  const chosen = candidates.slice(0, PICK_COUNT);
+  const chosen = candidates.slice(0, pickCount);
   chosen.sort((a, b) => a.locationNumber - b.locationNumber);
 
   return chosen.map((s, index) => ({

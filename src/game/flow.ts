@@ -19,6 +19,7 @@ import {
   subAisleFlowDirection,
   isWalkable,
 } from './levelgen';
+import { PALETTE, paletteAlpha } from './palette';
 
 export type LaneKind = 'main' | 'sub' | 'start' | 'other';
 
@@ -153,20 +154,20 @@ export function drawFlowTrailArrow(
   const cy = oy + tileSize / 2;
 
   if (kind === 'flow') {
-    ctx.fillStyle = `rgba(0, 230, 118, ${0.12 * alpha})`;
+    ctx.fillStyle = paletteAlpha(PALETTE.glowGreen, 0.12 * alpha);
   } else {
-    ctx.fillStyle = `rgba(255, 0, 51, ${0.14 * alpha})`;
+    ctx.fillStyle = paletteAlpha(PALETTE.glowRed, 0.14 * alpha);
   }
   ctx.fillRect(ox, oy, tileSize, tileSize);
 
   const tape =
     kind === 'flow'
-      ? `rgba(0, 200, 100, ${0.55 * alpha})`
-      : `rgba(213, 0, 0, ${0.58 * alpha})`;
+      ? paletteAlpha(PALETTE.glowGreen, 0.55 * alpha)
+      : paletteAlpha(PALETTE.glowRed, 0.58 * alpha);
   const chevron =
     kind === 'flow'
-      ? `rgba(0, 255, 127, ${0.82 * alpha})`
-      : `rgba(255, 0, 51, ${0.82 * alpha})`;
+      ? paletteAlpha(PALETTE.glowGreen, 0.82 * alpha)
+      : paletteAlpha(PALETTE.glowRed, 0.82 * alpha);
 
   drawLaneTape(ctx, ox, oy, tileSize, flow, tape);
   drawLaneChevron(ctx, cx, cy, flow, chevron);
@@ -405,8 +406,10 @@ export function drawFlowArrow(
   const oy = y * tileSize;
   const cx = ox + tileSize / 2;
   const cy = oy + tileSize / 2;
-  const tape = wrongWayFlash ? 'rgba(120, 40, 40, 0.55)' : 'rgba(70, 74, 88, 0.65)';
-  const chevron = wrongWayFlash ? '#e86058' : '#c4b070';
+  const tape = wrongWayFlash
+    ? paletteAlpha(PALETTE.glowRed, 0.55)
+    : paletteAlpha(PALETTE.pixelBlack, 0.45);
+  const chevron = wrongWayFlash ? PALETTE.glowRed : PALETTE.cautionYellow;
 
   drawLaneTape(ctx, ox, oy, tileSize, flow, tape);
   drawLaneChevron(ctx, cx, cy, flow, chevron);
@@ -432,14 +435,14 @@ export function drawMainAisleCenterLine(
   const x1 = Math.min(lineEndX, cullMaxGrid ?? lineEndX);
   if (x0 >= x1) return;
 
-  ctx.fillStyle = 'rgba(22, 24, 32, 0.75)';
+  ctx.fillStyle = paletteAlpha(PALETTE.pixelBlack, 0.75);
   ctx.fillRect(x0, y - 3, x1 - x0, 6);
 
-  ctx.fillStyle = 'rgba(196, 176, 112, 0.55)';
+  ctx.fillStyle = paletteAlpha(PALETTE.cautionYellow, 0.55);
   ctx.fillRect(x0, y - 2, x1 - x0, 1);
   ctx.fillRect(x0, y + 1, x1 - x0, 1);
 
-  ctx.fillStyle = 'rgba(196, 176, 112, 0.9)';
+  ctx.fillStyle = paletteAlpha(PALETTE.cautionYellow, 0.9);
   for (let x = x0 + 6; x < x1 - 6; x += 14) {
     ctx.fillRect(x, y, 6, 1);
   }

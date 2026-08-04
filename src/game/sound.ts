@@ -74,6 +74,16 @@ export const sfx = {
     blip(440, 0.1, 'square', 0.14);
     setTimeout(() => blip(880, 0.14, 'square', 0.14), 110);
   },
+  countdownTick() {
+    if (muted) return;
+    blip(320, 0.07, 'square', 0.12, 240);
+  },
+  raceGo() {
+    if (muted) return;
+    blip(520, 0.08, 'square', 0.16, 880);
+    setTimeout(() => blip(880, 0.16, 'square', 0.18, 1320), 60);
+    setTimeout(() => blip(660, 0.12, 'triangle', 0.12, 440), 140);
+  },
   skillSuperSpeed() {
     if (muted) return;
     blip(160, 0.06, 'triangle', 0.1, 520);

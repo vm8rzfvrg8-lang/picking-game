@@ -16,6 +16,7 @@ import { Difficulty, DIFFICULTY_PRESETS } from '../game/difficulty';
 import {
   MAX_CPU_COUNT,
   MIN_CPU_COUNT,
+  PICK_COUNT_OPTIONS,
 } from '../game/constants';
 import {
   SKILL_DEFINITIONS,
@@ -26,9 +27,11 @@ import {
 interface Props {
   difficulty: Difficulty;
   cpuCount: number;
+  pickCount: number;
   selectedSkill: SkillType;
   onDifficultyChange: (d: Difficulty) => void;
   onCpuCountChange: (count: number) => void;
+  onPickCountChange: (count: number) => void;
   onSkillChange: (skill: SkillType) => void;
   onStart: () => void;
   onTutorial: () => void;
@@ -86,7 +89,7 @@ function RulesModal({ onClose }: { onClose: () => void }) {
           <div className="flex items-start gap-2">
             <Target className="mt-0.5 h-4 w-4 shrink-0 text-[#ffe46b]" />
             <p>
-              光る<span className="font-bold text-[#ffe46b]">30か所の本棚</span>を棚番号の若い順にピック。
+              光る<span className="font-bold text-[#ffe46b]">本棚</span>を棚番号の若い順にピック。
               全部取ったら右端のシャッターへ向かえ。
             </p>
           </div>
@@ -134,9 +137,11 @@ function RulesModal({ onClose }: { onClose: () => void }) {
 export function StartScreen({
   difficulty,
   cpuCount,
+  pickCount,
   selectedSkill,
   onDifficultyChange,
   onCpuCountChange,
+  onPickCountChange,
   onSkillChange,
   onStart,
   onTutorial,
@@ -254,37 +259,72 @@ export function StartScreen({
             </div>
           </div>
 
-          <div className="start-panel shrink-0 rounded-xl border border-[#2a3a5d] bg-[#0c1530] p-2 sm:p-3">
-            <p className="mb-1.5 text-[10px] font-bold text-[#cfe0ff] sm:text-xs">
-              CPU人数
-            </p>
-            <div className="grid grid-cols-7 gap-1">
-              {CPU_COUNTS.map((n) => {
-                const active = n === cpuCount;
-                return (
-                  <button
-                    key={n}
-                    type="button"
-                    onClick={() => onCpuCountChange(n)}
-                    className={`rounded-md border px-1 py-1.5 text-center transition sm:py-2 ${
-                      active
-                        ? 'border-[#ff8c42] bg-[#ff8c42]/15 text-[#ff8c42]'
-                        : 'border-[#2a3a5d] bg-[#121a33] text-[#9fb0d8] hover:border-[#3a4a6d]'
-                    }`}
-                  >
-                    <span
-                      className="block text-[9px] font-black leading-tight sm:text-[10px]"
-                      style={{ fontFamily: '"Press Start 2P", monospace' }}
+          <div className="grid shrink-0 grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-3">
+            <div className="start-panel rounded-xl border border-[#2a3a5d] bg-[#0c1530] p-2 sm:p-3">
+              <p className="mb-1.5 text-[10px] font-bold text-[#cfe0ff] sm:text-xs">
+                CPU人数
+              </p>
+              <div className="grid grid-cols-7 gap-1">
+                {CPU_COUNTS.map((n) => {
+                  const active = n === cpuCount;
+                  return (
+                    <button
+                      key={n}
+                      type="button"
+                      onClick={() => onCpuCountChange(n)}
+                      className={`rounded-md border px-1 py-1.5 text-center transition sm:py-2 ${
+                        active
+                          ? 'border-[#ff8c42] bg-[#ff8c42]/15 text-[#ff8c42]'
+                          : 'border-[#2a3a5d] bg-[#121a33] text-[#9fb0d8] hover:border-[#3a4a6d]'
+                      }`}
                     >
-                      {n}
-                    </span>
-                  </button>
-                );
-              })}
+                      <span
+                        className="block text-[9px] font-black leading-tight sm:text-[10px]"
+                        style={{ fontFamily: '"Press Start 2P", monospace' }}
+                      >
+                        {n}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="mt-1.5 text-[9px] leading-snug text-[#9fb0d8] sm:text-[10px]">
+                プレイヤー1体 + CPU{cpuCount}体
+              </p>
             </div>
-            <p className="mt-1.5 text-[9px] leading-snug text-[#9fb0d8] sm:text-[10px]">
-              プレイヤー1体 + CPU{cpuCount}体が同時に競争します
-            </p>
+
+            <div className="start-panel rounded-xl border border-[#2a3a5d] bg-[#0c1530] p-2 sm:p-3">
+              <p className="mb-1.5 text-[10px] font-bold text-[#cfe0ff] sm:text-xs">
+                ピッキング点数
+              </p>
+              <div className="grid grid-cols-3 gap-1 sm:grid-cols-6">
+                {PICK_COUNT_OPTIONS.map((n) => {
+                  const active = n === pickCount;
+                  return (
+                    <button
+                      key={n}
+                      type="button"
+                      onClick={() => onPickCountChange(n)}
+                      className={`rounded-md border px-1 py-1.5 text-center transition sm:py-2 ${
+                        active
+                          ? 'border-[#3bd4ff] bg-[#3bd4ff]/15 text-[#3bd4ff]'
+                          : 'border-[#2a3a5d] bg-[#121a33] text-[#9fb0d8] hover:border-[#3a4a6d]'
+                      }`}
+                    >
+                      <span
+                        className="block text-[9px] font-black leading-tight sm:text-[10px]"
+                        style={{ fontFamily: '"Press Start 2P", monospace' }}
+                      >
+                        {n}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="mt-1.5 text-[9px] leading-snug text-[#9fb0d8] sm:text-[10px]">
+                {pickCount}点ピックでゴール解放
+              </p>
+            </div>
           </div>
 
           {/* Footer: controls + actions */}

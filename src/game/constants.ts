@@ -61,6 +61,15 @@ export const MAX_CPU_COUNT = 7;
 export const DEFAULT_CPU_COUNT = 7;
 
 export const PICK_COUNT = 30;
+/** Configurable pick-goal options on the start screen (also max). */
+export const PICK_COUNT_OPTIONS = [5, 10, 15, 20, 25, 30] as const;
+export const DEFAULT_PICK_COUNT = 10;
+
+export function clampPickCount(count: number): number {
+  const n = Math.round(count);
+  if (PICK_COUNT_OPTIONS.includes(n as (typeof PICK_COUNT_OPTIONS)[number])) return n;
+  return DEFAULT_PICK_COUNT;
+}
 export const PICK_DURATION_MS = 2000; // 2-second pick countdown
 
 /** Decorative break-room columns drawn left of the warehouse (10 tiles = bg illustration). */
@@ -88,6 +97,9 @@ export const MAX_LOOP_ITERATIONS_PER_FRAME = 10;
 import type { Difficulty } from './difficulty';
 import type { SkillState, SkillType } from './skills';
 import { createInitialSkills } from './skills';
+import { PALETTE, paletteAlpha } from './palette';
+
+export { PALETTE } from './palette';
 
 export type { Difficulty } from './difficulty';
 export type { SkillState, SkillType } from './skills';
@@ -95,15 +107,15 @@ export { SkillType } from './skills';
 
 export type Phase = 'start' | 'tutorial' | 'playing' | 'won' | 'lost';
 
-/** CPU body colors (index 0–6). */
+/** CPU body colors (index 0–6) — anchored to shared palette. */
 export const RIVAL_PALETTE = [
-  { body: '#ff8c42', light: '#ffb070', dark: '#a85a20', outline: '#5a2e0a', stun: '#7a5a3a' },
-  { body: '#ff5a8a', light: '#ff8cb0', dark: '#a83058', outline: '#5a1830', stun: '#7a4a58' },
-  { body: '#5aff8a', light: '#8affb0', dark: '#20a858', outline: '#0a5a30', stun: '#4a7a58' },
-  { body: '#8a5aff', light: '#b08aff', dark: '#5820a8', outline: '#300a5a', stun: '#5a4a7a' },
-  { body: '#ffdd5a', light: '#ffee8a', dark: '#a89820', outline: '#5a500a', stun: '#7a755a' },
-  { body: '#5ad4ff', light: '#8ae5ff', dark: '#2088a8', outline: '#0a485a', stun: '#4a687a' },
-  { body: '#ff7a5a', light: '#ffa08a', dark: '#a84820', outline: '#5a280a', stun: '#7a584a' },
+  { body: PALETTE.safetyOrange, light: '#ffb040', dark: '#a86000', outline: '#5a3800', stun: '#7a5a3a' },
+  { body: '#ff5a8a', light: '#ff8cb0', dark: '#a83058', outline: PALETTE.pixelBlack, stun: '#7a4a58' },
+  { body: PALETTE.glowGreen, light: '#4dff8a', dark: '#00a848', outline: PALETTE.pixelBlack, stun: '#4a7a58' },
+  { body: '#8a5aff', light: '#b08aff', dark: '#5820a8', outline: PALETTE.pixelBlack, stun: '#5a4a7a' },
+  { body: PALETTE.cautionYellow, light: '#ffe060', dark: '#a88010', outline: '#5a500a', stun: '#7a755a' },
+  { body: PALETTE.uiBlue, light: '#4db8ff', dark: '#0070cc', outline: PALETTE.pixelBlack, stun: '#4a687a' },
+  { body: PALETTE.glowRed, light: '#ff6080', dark: '#a81838', outline: PALETTE.pixelBlack, stun: '#7a584a' },
 ] as const;
 
 export interface GameState {
@@ -112,6 +124,8 @@ export interface GameState {
   rivals: RivalEntity[];
   /** Selected CPU count (1–7) for the current session. */
   cpuCount: number;
+  /** Pick targets required to unlock the goal (5–30). */
+  pickCount: number;
   targets: PickTarget[]; // player's ordered pick list
   currentTarget: number; // index into targets[] of the next to pick
   /** 1-based shelf location numbers keyed as "x,y". */
@@ -152,6 +166,10 @@ export interface GameState {
   pickCombo: number;
   /** Game elapsed (ms) when the last pick succeeded; -1 = none yet. */
   lastPickSuccessElapsed: number;
+  /** Highest pickCombo reached this race (HUD / floater peak). */
+  maxPickCombo: number;
+  /** Racers that crossed the goal line, in finish order. */
+  finishOrder: Array<{ kind: 'player' } | { kind: 'rival'; id: number }>;
 }
 
 export function clampCpuCount(count: number): number {
@@ -165,35 +183,35 @@ export function setPrimaryRival(state: GameState, rival: RivalEntity): GameState
 }
 
 export const COLORS = {
-  // Floor — warehouse concrete / epoxy tones
-  floorA: '#2c303c',
-  floorB: '#323848',
-  floorC: '#383350',
-  floorLine: 'rgba(80,70,110,0.25)',
-  floorGrout: '#2a2638',
-  floorHighlight: 'rgba(255,255,255,0.03)',
+  // Floor — warehouse grey epoxy
+  floorA: PALETTE.floorGrey,
+  floorB: '#7a828a',
+  floorC: '#6a727a',
+  floorLine: paletteAlpha(PALETTE.pixelBlack, 0.25),
+  floorGrout: PALETTE.bgDark,
+  floorHighlight: paletteAlpha(PALETTE.pixelWhite, 0.03),
 
-  // Walls — stone brick with depth
-  wallTop: '#6a7088',
-  wallTopLight: '#8088a4',
-  wallTopDark: '#545a72',
-  wallSide: '#3e4258',
-  wallSideDark: '#2a2e40',
-  wallEdge: '#1a1e2e',
-  wallBrick: '#5a6078',
-  wallBrickLight: '#6e7490',
-  wallBrickDark: '#444a60',
-  wallMortar: '#363a4e',
+  // Walls — concrete + metal from bg dark
+  wallTop: '#6a7080',
+  wallTopLight: '#8a929a',
+  wallTopDark: '#4a5058',
+  wallSide: PALETTE.bgDark,
+  wallSideDark: PALETTE.pixelBlack,
+  wallEdge: PALETTE.pixelBlack,
+  wallBrick: '#5a6070',
+  wallBrickLight: PALETTE.floorGrey,
+  wallBrickDark: '#3a4048',
+  wallMortar: '#2a2e38',
 
-  // Shelves — rich wood
-  shelfBack: '#2a1a0e',
-  shelfBackDark: '#1a0e06',
-  shelfWood: '#8a5a30',
-  shelfWoodLight: '#b07840',
-  shelfWoodDark: '#5a3818',
-  shelfWoodHighlight: '#c89058',
-  shelfBoard: '#6a4220',
-  shelfBoardLight: '#8a5a30',
+  // Shelves — wood tones from palette
+  shelfBack: PALETTE.pixelBlack,
+  shelfBackDark: '#0a0a0e',
+  shelfWood: PALETTE.shelfWood,
+  shelfWoodLight: '#8a5c3a',
+  shelfWoodDark: '#4a3018',
+  shelfWoodHighlight: '#a07048',
+  shelfBoard: '#5a3818',
+  shelfBoardLight: PALETTE.shelfWood,
 
   // Books — richer palette
   bookColors: [
@@ -227,42 +245,42 @@ export const COLORS = {
   bookHighlight: 'rgba(255,255,255,0.25)',
   bookShadow: 'rgba(0,0,0,0.3)',
 
-  // Player — cyan hero with depth
-  player: '#3bd4ff',
-  playerLight: '#7ae5ff',
-  playerDark: '#1a7ea8',
-  playerOutline: '#0a3a5a',
-  playerStun: '#7a9aa8',
+  // Player — UI blue hero
+  player: PALETTE.uiBlue,
+  playerLight: '#4db8ff',
+  playerDark: '#0070cc',
+  playerOutline: PALETTE.pixelBlack,
+  playerStun: '#6a8aa8',
 
-  // Rival — orange rival with depth
-  rival: '#ff8c42',
-  rivalLight: '#ffb070',
-  rivalDark: '#a85a20',
-  rivalOutline: '#5a2e0a',
+  // Rival — safety orange
+  rival: PALETTE.safetyOrange,
+  rivalLight: '#ffb040',
+  rivalDark: '#a86000',
+  rivalOutline: '#5a3800',
   rivalStun: '#7a5a3a',
 
-  // Goal — golden metallic shutter
-  goal: '#ffe46b',
-  goalLight: '#fff5a8',
-  goalDark: '#a8862a',
-  goalMetal: '#c8a840',
-  goalMetalDark: '#8a7028',
+  // Goal — caution yellow shutter
+  goal: PALETTE.cautionYellow,
+  goalLight: '#ffe060',
+  goalDark: '#a88010',
+  goalMetal: '#d4a820',
+  goalMetalDark: '#907010',
 
   // Glows and gauges
-  glow: '#ffe46b',
-  rivalGlow: '#ff8c42',
-  gauge: '#3bd4ff',
-  gaugeLight: '#7ae5ff',
-  gaugeBg: 'rgba(255,255,255,0.12)',
-  rivalGauge: '#ff8c42',
-  rivalGaugeLight: '#ffb070',
-  rivalGaugeBg: 'rgba(255,255,255,0.12)',
+  glow: PALETTE.cautionYellow,
+  rivalGlow: PALETTE.safetyOrange,
+  gauge: PALETTE.uiBlue,
+  gaugeLight: '#4db8ff',
+  gaugeBg: paletteAlpha(PALETTE.pixelWhite, 0.12),
+  rivalGauge: PALETTE.safetyOrange,
+  rivalGaugeLight: '#ffb040',
+  rivalGaugeBg: paletteAlpha(PALETTE.pixelWhite, 0.12),
 
   // Effects
-  shadow: 'rgba(0,0,0,0.4)',
-  shadowSoft: 'rgba(0,0,0,0.2)',
-  text: '#e8ecff',
-  textSoft: '#9fb0d8',
-  textDim: '#5a6a8d',
-  collision: '#ffffff',
+  shadow: paletteAlpha(PALETTE.pixelBlack, 0.4),
+  shadowSoft: paletteAlpha(PALETTE.pixelBlack, 0.2),
+  text: PALETTE.pixelWhite,
+  textSoft: PALETTE.floorGrey,
+  textDim: '#6a727a',
+  collision: PALETTE.pixelWhite,
 } as const;

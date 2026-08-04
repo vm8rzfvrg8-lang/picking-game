@@ -13,6 +13,7 @@ import {
 } from './topHeaderBackground';
 import { drawFlowArrow, drawMainAisleCenterLine, flowAt, isWrongWay } from './flow';
 import { isGoalCell, isShelf, isStartCorridorX, isStartLineColumn, LEFT_SHELF_ROUTE_X, MAIN_AISLE_Y_BOTTOM, shelfLocationKey, START_ZONE_X_MIN } from './levelgen';
+import { PALETTE, paletteAlpha } from './palette';
 
 export interface RenderOpts {
   blink: number;
@@ -47,32 +48,32 @@ function bookColor(x: number, y: number): string {
   return arr[(x * 7 + y * 13) % arr.length];
 }
 
-/** Warehouse aisle floor — dark blue-gray, lets wood shelves pop. */
+/** Warehouse aisle floor — shared palette grey. */
 const PASSAGE_FLOOR = {
-  base: '#2c303c',
-  speckA: '#262a34',
-  speckB: '#232730',
-  seam: '#363b48',
+  base: PALETTE.floorGrey,
+  speckA: '#7a828a',
+  speckB: '#6a727a',
+  seam: '#727a82',
 } as const;
 
-/** Start bay floor — slightly lighter dock tone. */
+/** Start bay floor — dock tone from palette. */
 const START_FLOOR = {
-  base: '#323848',
-  edge: '#c9a227',
-  mark: '#3a4050',
+  base: '#7a828a',
+  edge: PALETTE.cautionYellow,
+  mark: PALETTE.bgDark,
 } as const;
 
-/** Static wall palette — concrete + metal frame (no gradients). */
+/** Static wall palette — concrete + metal frame. */
 const WALL_PIXEL = {
-  concrete: '#3a3e4c',
-  concreteHi: '#484e5e',
-  concreteLo: '#2a2e3a',
-  mortar: '#323642',
-  metal: '#566074',
-  metalHi: '#6e7890',
-  metalLo: '#404858',
-  rivet: '#8a94a8',
-  beam: '#525868',
+  concrete: '#5a6070',
+  concreteHi: PALETTE.floorGrey,
+  concreteLo: PALETTE.bgDark,
+  mortar: '#3a4048',
+  metal: '#6a7080',
+  metalHi: '#8a929a',
+  metalLo: '#4a5058',
+  rivet: PALETTE.floorGrey,
+  beam: '#4a5058',
 } as const;
 
 /** Lightweight ground shadow — single fill, no shadowBlur. */
@@ -83,7 +84,7 @@ function drawGroundShadow(
   rx = 11,
   ry = 4,
 ) {
-  ctx.fillStyle = 'rgba(0,0,0,0.24)';
+  ctx.fillStyle = paletteAlpha(PALETTE.pixelBlack, 0.24);
   ctx.beginPath();
   ctx.ellipse(px(cx), px(footY), rx, ry, 0, 0, Math.PI * 2);
   ctx.fill();
@@ -124,13 +125,13 @@ function drawStartLineCheckerTile(
     for (let cx = 0; cx < TILE; cx += cell) {
       const dark =
         (Math.floor(cx / cell) + Math.floor(cy / cell) + gy) % 2 === 0;
-      ctx.fillStyle = dark ? '#141418' : '#ececec';
+      ctx.fillStyle = dark ? PALETTE.pixelBlack : PALETTE.pixelWhite;
       ctx.fillRect(ox + cx, oy + cy, cell, cell);
     }
   }
 
   if (gy === MAIN_AISLE_Y_BOTTOM) {
-    ctx.fillStyle = '#1a1a1a';
+    ctx.fillStyle = PALETTE.pixelBlack;
     ctx.font = 'bold 7px monospace';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -151,11 +152,11 @@ function drawStartCorridorTile(
   }
 
   const isLeftEdge = gx === START_ZONE_X_MIN + 1;
-  ctx.fillStyle = isLeftEdge ? START_FLOOR.base : '#363c4a';
+  ctx.fillStyle = isLeftEdge ? START_FLOOR.base : PALETTE.bgDark;
   ctx.fillRect(ox, oy, TILE, TILE);
 
   if (!isLeftEdge) {
-    ctx.fillStyle = 'rgba(201,162,39,0.18)';
+    ctx.fillStyle = paletteAlpha(PALETTE.cautionYellow, 0.18);
     ctx.fillRect(ox, oy + TILE - 2, TILE, 1);
     ctx.fillRect(ox + TILE - 1, oy, 1, TILE);
   }
@@ -168,20 +169,20 @@ function drawStartCorridorTile(
 
 /** Dense wood / old-book palette for S (shelf) tiles — visual only. */
 const SHELF_PIXEL = {
-  backDark: '#140c06',
-  backMid: '#221610',
-  backLight: '#2e1e14',
-  frameDark: '#2a1a0c',
-  frameMid: '#5a3818',
-  frameLight: '#8a5830',
-  frameHi: '#b07840',
-  grain: '#3a2414',
-  board: '#4a3018',
-  boardLight: '#6a4428',
-  boardShadow: '#2a1808',
-  dust: '#9a9080',
-  label: '#c8a850',
-  page: '#d8d0c0',
+  backDark: PALETTE.pixelBlack,
+  backMid: '#1a1410',
+  backLight: '#2a2018',
+  frameDark: '#4a3018',
+  frameMid: PALETTE.shelfWood,
+  frameLight: '#8a5c3a',
+  frameHi: '#a07048',
+  grain: '#3a2818',
+  board: '#5a3818',
+  boardLight: '#7a5030',
+  boardShadow: PALETTE.pixelBlack,
+  dust: PALETTE.floorGrey,
+  label: PALETTE.cautionYellow,
+  page: PALETTE.pixelWhite,
 } as const;
 
 function drawLegacyFloorBase(
@@ -191,7 +192,7 @@ function drawLegacyFloorBase(
   gx: number,
   gy: number,
 ) {
-  ctx.fillStyle = '#2a2e3a';
+  ctx.fillStyle = PALETTE.bgDark;
   ctx.fillRect(ox, oy, TILE, TILE);
 }
 
@@ -690,7 +691,7 @@ function drawGoals(
   blink: number,
   cull?: CullBounds,
 ) {
-  const allPicked = state.currentTarget >= state.targets.length;
+  const allPicked = state.currentTarget >= state.pickCount;
   for (const g of state.goals) {
     if (cull && !isCellVisible(g.x, g.y, cull)) continue;
     drawGoalAt(ctx, g.x, g.y, allPicked, blink);

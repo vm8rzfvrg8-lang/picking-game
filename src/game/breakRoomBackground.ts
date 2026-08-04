@@ -1,4 +1,5 @@
 import { GRID_H, LEFT_DECOR_COLS, TILE } from './constants';
+import { PALETTE, paletteAlpha } from './palette';
 
 /** Place PNG at `public/break-room-bg.png` to replace the dummy background. */
 export const BREAK_ROOM_BG_URL = '/break-room-bg.png';
@@ -34,10 +35,10 @@ export function drawBreakRoomBackground(
     return;
   }
 
-  ctx.fillStyle = '#525860';
+  ctx.fillStyle = PALETTE.floorGrey;
   ctx.fillRect(ox, oy, width, height);
 
-  ctx.fillStyle = '#464c54';
+  ctx.fillStyle = '#7a828a';
   for (let ty = 0; ty < GRID_H; ty++) {
     for (let tx = 0; tx < LEFT_DECOR_COLS; tx++) {
       if ((tx + ty) % 2 === 0) continue;
@@ -45,7 +46,7 @@ export function drawBreakRoomBackground(
     }
   }
 
-  ctx.fillStyle = 'rgba(200, 210, 220, 0.35)';
+  ctx.fillStyle = paletteAlpha(PALETTE.pixelWhite, 0.35);
   ctx.font = 'bold 11px monospace';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
@@ -55,7 +56,7 @@ export function drawBreakRoomBackground(
     oy + height / 2 - 8,
   );
   ctx.font = '9px monospace';
-  ctx.fillStyle = 'rgba(200, 210, 220, 0.28)';
+  ctx.fillStyle = paletteAlpha(PALETTE.pixelWhite, 0.28);
   ctx.fillText('(placeholder)', ox + width / 2, oy + height / 2 + 10);
 }
 

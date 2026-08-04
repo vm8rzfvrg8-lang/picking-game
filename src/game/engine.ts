@@ -2,7 +2,8 @@ import {
   Facing,
   GameState,
   Phase,
-  PICK_COUNT,
+  clampPickCount,
+  DEFAULT_PICK_COUNT,
   PICK_DURATION_MS,
   YIELD_COLLISION_WINDOW_MS,
   PickTarget,
@@ -26,6 +27,7 @@ import {
   registerPickComboSuccess,
   tickComboExpiry,
 } from './combo';
+import { registerFinish } from './result';
 import { createInitialSkills, isPushThroughActive, isSuperSpeedActive, tickSkills, useSkill, SkillType } from './skills';
 import { tutorialRivalPatrolDir } from './tutorial/layout';
 import {
@@ -48,8 +50,9 @@ function createRivalEntity(
   shelfCells: { x: number; y: number }[],
   shelfLocations: Record<string, number>,
   rng: ReturnType<typeof makeRng>,
+  pickCount: number,
 ): RivalEntity {
-  const rivalTargets = assignTargets(shelfCells, shelfLocations, rng);
+  const rivalTargets = assignTargets(shelfCells, shelfLocations, rng, pickCount);
   return {
     id,
     x: spawn.x,
@@ -116,8 +119,10 @@ export function newGame(
   difficulty: Difficulty = 'normal',
   selectedSkill: SkillType = SkillType.SuperSpeed,
   cpuCount: number = DEFAULT_CPU_COUNT,
+  pickCount: number = DEFAULT_PICK_COUNT,
 ): GameState {
   const count = clampCpuCount(cpuCount);
+  const picks = clampPickCount(pickCount);
   const s = seed ?? Math.floor(Math.random() * 1e9);
   const rng = makeRng(s);
   const { grid, shelfCells } = generateLibrary(rng);
@@ -130,10 +135,10 @@ export function newGame(
     playerSpawn = near;
   }
 
-  const targets = assignTargets(shelfCells, shelfLocations, rng);
+  const targets = assignTargets(shelfCells, shelfLocations, rng, picks);
   const cpuSpawns = spawns.cpus;
   const rivals = cpuSpawns.map((spawn, id) =>
-    createRivalEntity(id, spawn, shelfCells, shelfLocations, rng),
+    createRivalEntity(id, spawn, shelfCells, shelfLocations, rng, picks),
   );
 
   return {
@@ -149,6 +154,7 @@ export function newGame(
     },
     rivals,
     cpuCount: count,
+    pickCount: picks,
     targets,
     currentTarget: 0,
     pickProgress: 0,
@@ -177,6 +183,8 @@ export function newGame(
     rivalSkills: Array.from({ length: count }, () => createInitialSkills()),
     pickCombo: 0,
     lastPickSuccessElapsed: -1,
+    maxPickCombo: 0,
+    finishOrder: [],
   };
 }
 
@@ -202,7 +210,7 @@ export function enterTutorial(s: GameState): GameState {
 
 export function returnToStart(s: GameState): GameState {
   return {
-    ...newGame(s.seed, s.difficulty, s.selectedSkill, s.cpuCount),
+    ...newGame(s.seed, s.difficulty, s.selectedSkill, s.cpuCount, s.pickCount),
     phase: 'start' as Phase,
   };
 }
@@ -425,7 +433,7 @@ function rivalPathStep(
 ): RivalStepResult {
   let dist: number[][] | null = null;
 
-  if (r.currentTarget < PICK_COUNT) {
+  if (r.currentTarget < s.pickCount) {
     const t = r.targets[r.currentTarget];
     if (!t || t.done) {
       return { rival: r, collision: false, attemptDir: null, rivalRivalCollision: null };
@@ -1344,6 +1352,7 @@ export function step(state: GameState, input: Input, dtMs: number): StepResult {
             s.elapsed,
           );
           s.pickCombo = comboResult.combo;
+          s.maxPickCombo = Math.max(s.maxPickCombo, comboResult.combo);
           s.lastPickSuccessElapsed = s.elapsed;
           events.push({ type: 'pickDone', who: 'player', index: s.currentTarget });
           if (comboResult.chained) {
@@ -1430,13 +1439,18 @@ export function step(state: GameState, input: Input, dtMs: number): StepResult {
 
   s = resolveRivalOverlaps(s);
 
-  if (s.phase === 'playing' && s.currentTarget >= PICK_COUNT) {
+  if (s.phase === 'playing' && s.currentTarget >= s.pickCount) {
     if (isGoalCell(s.grid, s.player.x, s.player.y)) {
+      s = registerFinish(s, { kind: 'player' });
       events.push({ type: 'win' });
       s.phase = 'won';
     }
   }
   if (s.phase === 'playing' && s.rivals.some((r) => r.reachedGoal)) {
+    const finisher = s.rivals.find((r) => r.reachedGoal);
+    if (finisher) {
+      s = registerFinish(s, { kind: 'rival', id: finisher.id });
+    }
     events.push({ type: 'lose' });
     s.phase = 'lost';
   }
@@ -1557,7 +1571,7 @@ function stepOneRival(
     return { rival: r, collision, attemptDir, rivalRivalCollision: null };
   }
 
-  if (r.currentTarget >= PICK_COUNT) {
+  if (r.currentTarget >= s.pickCount) {
     if (isGoalCell(s.grid, r.x, r.y)) {
       r.reachedGoal = true;
       return { rival: r, collision, attemptDir, rivalRivalCollision: null };
@@ -1572,7 +1586,7 @@ function stepOneRival(
     return { rival: r, collision, attemptDir, rivalRivalCollision: null };
   }
 
-  if (r.currentTarget < PICK_COUNT) {
+  if (r.currentTarget < s.pickCount) {
     const t = r.targets[r.currentTarget];
     if (!t || t.done) {
       r.currentTarget++;
