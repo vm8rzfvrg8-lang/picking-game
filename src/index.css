@@ -1257,3 +1257,32 @@ kbd {
   height: 0.875rem;
   flex-shrink: 0;
 }
+
+.audio-volume-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(90deg, #1a3055, #3bd4ff55);
+  outline: none;
+}
+
+.audio-volume-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid #3bd4ff;
+  background: #0c1530;
+  cursor: pointer;
+}
+
+.audio-volume-slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid #3bd4ff;
+  background: #0c1530;
+  cursor: pointer;
+}

@@ -35,6 +35,7 @@ interface Props {
   onSkillChange: (skill: SkillType) => void;
   onStart: () => void;
   onTutorial: () => void;
+  onOpenAudioSettings?: () => void;
 }
 
 const DIFFICULTIES: Difficulty[] = ['easy', 'normal', 'hard'];
@@ -145,6 +146,7 @@ export function StartScreen({
   onSkillChange,
   onStart,
   onTutorial,
+  onOpenAudioSettings,
 }: Props) {
   const [rulesOpen, setRulesOpen] = useState(false);
   const closeRules = useCallback(() => setRulesOpen(false), []);
@@ -335,6 +337,15 @@ export function StartScreen({
               ピック: 光る本棚の方向キーを長押し（約2.0秒）
             </p>
             <div className="flex w-full max-w-[420px] items-center justify-center gap-2 sm:gap-3">
+              {onOpenAudioSettings && (
+                <button
+                  type="button"
+                  onClick={onOpenAudioSettings}
+                  className="shrink-0 rounded-lg border border-[#2a3a5d] bg-[#121a33] px-2 py-2 text-[9px] text-[#9fb0d8] transition hover:border-[#3bd4ff]/40 hover:text-[#3bd4ff] sm:px-3 sm:text-[10px]"
+                >
+                  サウンド
+                </button>
+              )}
               <button
                 type="button"
                 onClick={onTutorial}

@@ -13,7 +13,8 @@ import {
   eraseFloorCell,
   applyRetroColorFilter,
 } from './game/renderer';
-import { sfx, setMuted, unlockAudio, playSkillSfx } from './game/sound';
+import { sfx, setMuted, unlockAudio, playSkillSfx, startBgm, fadeOutBgm, stopBgm } from './game/sound';
+import { AudioSettingsModal } from './components/AudioSettingsModal';
 import { useKeyboardInput } from './hooks/useKeyboardInput';
 import { useAnimationFrame } from './hooks/useAnimationFrame';
 import { useCanvasResize } from './hooks/useCanvasResize';
@@ -111,6 +112,7 @@ export default function App() {
   const [muted, setMutedState] = useState(false);
   const mutedRef = useRef(false);
   mutedRef.current = muted;
+  const [audioSettingsOpen, setAudioSettingsOpen] = useState(false);
 
   // Visual interpolated positions (grid units)
   const playerVisualRef = useRef({ x: game.player.x, y: game.player.y });
@@ -164,6 +166,7 @@ export default function App() {
           );
           triggerRaceGoBurst(vfx, origin.x, origin.y);
           sfx.raceGo();
+          startBgm();
         } else {
           triggerCountdownPulse(vfx, false);
           sfx.countdownTick();
@@ -208,6 +211,12 @@ export default function App() {
     snapCameraTo(cameraRef, viewportRef, gameRef.current.player.x, gameRef.current.player.y);
   }, []);
 
+  useEffect(() => {
+    if (game.phase === 'won' || game.phase === 'lost') {
+      fadeOutBgm();
+    }
+  }, [game.phase]);
+
   const applyTutorialLayout = useCallback((callbacks: TutorialCallback[]) => {
     for (const cb of callbacks) {
       if (cb.type === 'subStepStarted') {
@@ -244,6 +253,7 @@ export default function App() {
     clearCountdownTimers();
     countdownActiveRef.current = false;
     setCountdownLabel(null);
+    stopBgm();
     const g = newGame(undefined, difficulty, selectedSkill, cpuCount, pickCount);
     setGame(g);
     gameRef.current = g;
@@ -375,6 +385,7 @@ export default function App() {
           if (t) triggerPickComplete(vfx, t.x, t.y, 'player');
         } else if (ev.type === 'pickCombo') {
           triggerComboPop(vfx, res.state.player.x, res.state.player.y, ev.combo);
+          sfx.combo(ev.combo, ev.tier);
         } else if (ev.type === 'pickDone' && ev.who === 'rival') {
           sfx.pickup();
           const rival =
@@ -382,7 +393,14 @@ export default function App() {
           const t = rival?.targets[ev.index];
           if (t) triggerPickComplete(vfx, t.x, t.y, 'rival', rival?.id);
         } else if (ev.type === 'collision') {
-          sfx.collision();
+          sfx.collision({
+            playerKnocked: ev.playerKnockedBack,
+            rivalKnocked: ev.rivalKnockedBack,
+            playerPushed: ev.playerPushed,
+            rivalPushed: ev.rivalPushed,
+            playerSeed: ev.knockbackSeedA,
+            rivalSeed: ev.knockbackSeedB,
+          });
           if (ev.involvesPlayer) {
             triggerCollisionShake(vfx, ev.playerWrongWay || ev.rivalWrongWay);
           }
@@ -601,6 +619,7 @@ export default function App() {
             elapsedMs={game.elapsed}
             muted={muted}
             onToggleMute={toggleMute}
+            onOpenAudioSettings={() => setAudioSettingsOpen(true)}
             onReset={resetGame}
           />
         )}
@@ -656,8 +675,14 @@ export default function App() {
             onSkillChange={setSelectedSkill}
             onStart={beginGame}
             onTutorial={beginTutorial}
+            onOpenAudioSettings={() => setAudioSettingsOpen(true)}
           />
         )}
+
+        <AudioSettingsModal
+          open={audioSettingsOpen}
+          onClose={() => setAudioSettingsOpen(false)}
+        />
       </div>
     </div>
   );

@@ -1,13 +1,20 @@
-import { Clock, RotateCcw, Volume2, VolumeX } from 'lucide-react';
+import { Clock, RotateCcw, SlidersHorizontal, Volume2, VolumeX } from 'lucide-react';
 
 interface Props {
   elapsedMs: number;
   muted: boolean;
   onToggleMute: () => void;
+  onOpenAudioSettings: () => void;
   onReset: () => void;
 }
 
-export function GameplayTopBar({ elapsedMs, muted, onToggleMute, onReset }: Props) {
+export function GameplayTopBar({
+  elapsedMs,
+  muted,
+  onToggleMute,
+  onOpenAudioSettings,
+  onReset,
+}: Props) {
   const seconds = (elapsedMs / 1000).toFixed(1);
 
   return (
@@ -16,6 +23,14 @@ export function GameplayTopBar({ elapsedMs, muted, onToggleMute, onReset }: Prop
         <Clock className="h-3 w-3 shrink-0" />
         <span className="font-mono font-bold tabular-nums">{seconds}s</span>
       </div>
+      <button
+        type="button"
+        onClick={onOpenAudioSettings}
+        className="rounded-md border border-[#2a3a5d]/80 bg-[#0c1530]/90 p-1 text-[#9fb0d8] backdrop-blur-sm transition hover:bg-[#1a2a4d]"
+        aria-label="サウンド設定"
+      >
+        <SlidersHorizontal className="h-3.5 w-3.5" />
+      </button>
       <button
         type="button"
         onClick={onToggleMute}

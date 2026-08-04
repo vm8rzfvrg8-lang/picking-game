@@ -12,6 +12,9 @@ import {
   Difficulty,
   DEFAULT_CPU_COUNT,
   MAX_LOOP_ITERATIONS_PER_FRAME,
+  RIVAL_STUCK_DETECT_MS,
+  RIVAL_UNSTICK_MOVE_COUNT,
+  RIVAL_PUSH_STUCK_MS,
   clampCpuCount,
 } from './constants';
 import { getDifficultyConfig, type DifficultyConfig } from './difficulty';
@@ -22,6 +25,10 @@ import {
   flowAt,
   isWrongWay,
   separateIfOverlapping,
+  applyRepulsionKnockback,
+  applyHeadOnSlide,
+  isNarrowCorridorCell,
+  backFromCollision,
 } from './flow';
 import {
   registerPickComboSuccess,
@@ -70,6 +77,14 @@ function createRivalEntity(
     allowWrongWay: false,
     pickWaitTimer: 0,
     jamStun: false,
+    stuckMs: 0,
+    stuckAnchorX: spawn.x,
+    stuckAnchorY: spawn.y,
+    unstickMovesLeft: 0,
+    routeSeed: rng(),
+    pushStuckMs: 0,
+    pushBlockerIndex: null,
+    narrowCorridorSince: -1,
   };
 }
 
@@ -270,17 +285,20 @@ function dirBetween(fx: number, fy: number, tx: number, ty: number): Direction |
   return null;
 }
 
-/** BFS from walkable cells adjacent to a shelf; picks the best approach lane. */
+/** BFS from walkable cells adjacent to a shelf; picks approach lane with per-CPU bias. */
 function pickShelfApproachDistMap(
   grid: GameState['grid'],
   shelfX: number,
   shelfY: number,
   fromX: number,
   fromY: number,
+  rivalId: number,
+  routeSeed: number,
 ): number[][] | null {
-  let bestFromRival = Infinity;
-  let dist: number[][] | null = null;
+  type ApproachOption = { dist: number[][]; score: number };
+  const options: ApproachOption[] = [];
   let scans = 0;
+  let approachIdx = 0;
   for (const [adx, ady] of NEIGHBOR_DELTAS) {
     scans++;
     if (scans > MAX_LOOP_ITERATIONS_PER_FRAME) break;
@@ -289,12 +307,14 @@ function pickShelfApproachDistMap(
     if (!isWalkable(grid, ax, ay)) continue;
     const dmap = bfsDistances(grid, ax, ay);
     const fromRival = dmap[fromY]?.[fromX] ?? -1;
-    if (fromRival >= 0 && fromRival < bestFromRival) {
-      bestFromRival = fromRival;
-      dist = dmap;
-    }
+    if (fromRival < 0) continue;
+    const sideBias = ((rivalId * 0.37 + routeSeed * 4 + approachIdx * 0.61) % 1) * 0.35;
+    options.push({ dist: dmap, score: fromRival + sideBias });
+    approachIdx++;
   }
-  return dist;
+  if (options.length === 0) return null;
+  options.sort((a, b) => a.score - b.score);
+  return options[0].dist;
 }
 
 /** BFS distance map toward the nearest reachable goal cell. */
@@ -319,8 +339,27 @@ function pickGoalDistMap(
   return dist;
 }
 
+function crowdPenaltyAt(
+  s: GameState,
+  nx: number,
+  ny: number,
+  rivalIndex: number,
+): number {
+  let penalty = 0;
+  for (let i = 0; i < s.rivals.length; i++) {
+    if (i === rivalIndex) continue;
+    const o = s.rivals[i];
+    if (o.x === nx && o.y === ny) penalty += 2.5;
+    else if (Math.abs(o.x - nx) + Math.abs(o.y - ny) === 1) penalty += 0.8;
+  }
+  if (s.player.x === nx && s.player.y === ny) penalty += 3;
+  return penalty;
+}
+
 function scoreMoveCandidate(
+  s: GameState,
   r: RivalEntity,
+  rivalIndex: number,
   nx: number,
   ny: number,
   dist: number[][],
@@ -336,6 +375,9 @@ function scoreMoveCandidate(
   else if (isWrongWay(r.x, r.y, moveDir)) tieBreak += cpu.wrongWayPenalty;
   if (r.lastMoveDir === moveDir) tieBreak -= 0.15;
   else if (r.facing === moveDir) tieBreak -= 0.05;
+  tieBreak += crowdPenaltyAt(s, nx, ny, rivalIndex);
+  tieBreak += (r.routeSeed - 0.5) * 0.18;
+  tieBreak += r.id * 0.04;
   return { x: nx, y: ny, score: d + tieBreak, dir: moveDir };
 }
 
@@ -354,7 +396,7 @@ function collectPathCandidates(
     const nx = r.x + dx;
     const ny = r.y + dy;
     if (!isWalkable(s.grid, nx, ny)) continue;
-    const candidate = scoreMoveCandidate(r, nx, ny, dist, cpu);
+    const candidate = scoreMoveCandidate(s, r, rivalIndex, nx, ny, dist, cpu);
     if (candidate) candidates.push(candidate);
   }
   candidates.sort((a, b) => a.score - b.score);
@@ -377,13 +419,49 @@ function applyRivalMove(
   ny: number,
   events: GameEvent[],
 ): RivalStepResult {
+  const occupiers = allOccupiers(s);
+  const trySlidePast = (
+    otherX: number,
+    otherY: number,
+  ): RivalStepResult | null => {
+    const slide = applyHeadOnSlide(
+      s.grid,
+      r.x,
+      r.y,
+      moveDir,
+      otherX,
+      otherY,
+      occupiers,
+      r.id % 2 === 0 ? 'left' : 'right',
+    );
+    if (!slide.dir || (slide.x === r.x && slide.y === r.y)) return null;
+    const fromX = r.x;
+    const fromY = r.y;
+    const next = {
+      ...r,
+      x: slide.x,
+      y: slide.y,
+      facing: slide.dir,
+      lastMoveDir: slide.dir,
+    };
+    events.push({ type: 'move', who: 'rival', fromX, fromY, dir: slide.dir });
+    return { rival: next, collision: false, attemptDir: null, rivalRivalCollision: null };
+  };
+
   if (nx === s.player.x && ny === s.player.y) {
+    const slid = trySlidePast(s.player.x, s.player.y);
+    if (slid) return slid;
     events.push({ type: 'bump', who: 'rival' });
     return { rival: r, collision: true, attemptDir: moveDir, rivalRivalCollision: null };
   }
   if (isCellOccupiedByRival(s, nx, ny, rivalIndex)) {
-    events.push({ type: 'bump', who: 'rival' });
     const blockerIndex = findRivalIndexAt(s, nx, ny, rivalIndex);
+    const blocker = blockerIndex !== null ? s.rivals[blockerIndex] : null;
+    if (blocker) {
+      const slid = trySlidePast(blocker.x, blocker.y);
+      if (slid) return slid;
+    }
+    events.push({ type: 'bump', who: 'rival' });
     return {
       rival: r,
       collision: false,
@@ -398,32 +476,228 @@ function applyRivalMove(
   return { rival: next, collision: false, attemptDir: null, rivalRivalCollision: null };
 }
 
-/** Safety: separate overlapping CPUs using the same neighbor logic as player–CPU. */
+/** Safety: iteratively separate overlapping CPUs with mutual repulsion. */
 function resolveRivalOverlaps(s: GameState): GameState {
-  const rivals = [...s.rivals];
-  let pairChecks = 0;
-  for (let i = 0; i < rivals.length; i++) {
-    for (let j = i + 1; j < rivals.length; j++) {
-      pairChecks++;
-      if (pairChecks > MAX_LOOP_ITERATIONS_PER_FRAME) {
-        return { ...s, rivals };
+  let rivals = [...s.rivals];
+  let changed = true;
+  let iterations = 0;
+  while (changed && iterations < MAX_LOOP_ITERATIONS_PER_FRAME) {
+    changed = false;
+    iterations++;
+    for (let i = 0; i < rivals.length; i++) {
+      for (let j = i + 1; j < rivals.length; j++) {
+        if (rivals[i].x !== rivals[j].x || rivals[i].y !== rivals[j].y) continue;
+        const occupiers = rivals.map((rv) => ({ x: rv.x, y: rv.y }));
+        let ax = rivals[i].x;
+        let ay = rivals[i].y;
+        let bx = rivals[j].x;
+        let by = rivals[j].y;
+        const repA = applyRepulsionKnockback(s.grid, ax, ay, bx, by, occupiers);
+        const repB = applyRepulsionKnockback(s.grid, bx, by, ax, ay, occupiers);
+        ax = repA.x;
+        ay = repA.y;
+        bx = repB.x;
+        by = repB.y;
+        const sep = separateIfOverlapping(
+          s.grid,
+          { x: ax, y: ay },
+          { x: bx, y: by },
+          false,
+          false,
+        );
+        if (
+          sep.player.x !== rivals[i].x ||
+          sep.player.y !== rivals[i].y ||
+          sep.rival.x !== rivals[j].x ||
+          sep.rival.y !== rivals[j].y
+        ) {
+          changed = true;
+        }
+        rivals[i] = { ...rivals[i], x: sep.player.x, y: sep.player.y };
+        rivals[j] = { ...rivals[j], x: sep.rival.x, y: sep.rival.y };
       }
-      if (rivals[i].x !== rivals[j].x || rivals[i].y !== rivals[j].y) continue;
-      const sep = separateIfOverlapping(
-        s.grid,
-        { x: rivals[i].x, y: rivals[i].y },
-        { x: rivals[j].x, y: rivals[j].y },
-        false,
-        false,
-      );
-      rivals[i] = { ...rivals[i], x: sep.player.x, y: sep.player.y };
-      rivals[j] = { ...rivals[j], x: sep.rival.x, y: sep.rival.y };
     }
   }
   return { ...s, rivals };
 }
 
-/** Goal-directed CPU step: take only the best path cell (Pattern A — no detour). */
+/** Forced sidestep to break deadlocks (1–2 cells away from stuck anchor). */
+function rivalUnstickStep(
+  s: GameState,
+  r: RivalEntity,
+  rivalIndex: number,
+  events: GameEvent[],
+): RivalStepResult {
+  if (isNarrowCorridorCell(s.grid, r.x, r.y) && r.lastMoveDir) {
+    const backDir: Direction =
+      r.lastMoveDir === 'up'
+        ? 'down'
+        : r.lastMoveDir === 'down'
+          ? 'up'
+          : r.lastMoveDir === 'left'
+            ? 'right'
+            : 'left';
+    const bx = r.x + DELTA[backDir].dx;
+    const by = r.y + DELTA[backDir].dy;
+    if (isWalkable(s.grid, bx, by) && !isCellOccupied(s, bx, by, rivalIndex)) {
+      const result = applyRivalMove(s, r, rivalIndex, backDir, bx, by, events);
+      return {
+        ...result,
+        rival: {
+          ...result.rival,
+          unstickMovesLeft: Math.max(0, r.unstickMovesLeft - 1),
+          stuckMs: 0,
+          pushStuckMs: 0,
+          pushBlockerIndex: null,
+          stuckAnchorX: result.rival.x,
+          stuckAnchorY: result.rival.y,
+        },
+      };
+    }
+  }
+
+  type EscapeCell = { x: number; y: number; dir: Direction; score: number };
+  const escapes: EscapeCell[] = [];
+  let scans = 0;
+  for (const [dx, dy] of NEIGHBOR_DELTAS) {
+    scans++;
+    if (scans > MAX_LOOP_ITERATIONS_PER_FRAME) break;
+    const nx = r.x + dx;
+    const ny = r.y + dy;
+    if (!isWalkable(s.grid, nx, ny)) continue;
+    const moveDir = dirBetween(r.x, r.y, nx, ny);
+    if (!moveDir) continue;
+    let score = Math.abs(nx - r.stuckAnchorX) + Math.abs(ny - r.stuckAnchorY);
+    score += crowdPenaltyAt(s, nx, ny, rivalIndex);
+    if (nx === s.player.x && ny === s.player.y) score += 4;
+    if (isCellOccupiedByRival(s, nx, ny, rivalIndex)) score += 6;
+    score += ((r.routeSeed + r.id * 0.17) % 1) * 0.4;
+    escapes.push({ x: nx, y: ny, dir: moveDir, score });
+  }
+  escapes.sort((a, b) => a.score - b.score);
+  if (escapes.length === 0) {
+    return {
+      rival: { ...r, unstickMovesLeft: Math.max(0, r.unstickMovesLeft - 1) },
+      collision: false,
+      attemptDir: null,
+      rivalRivalCollision: null,
+    };
+  }
+  const pickIdx =
+    (r.id + Math.floor(s.elapsed / 350) + Math.floor(r.routeSeed * 12)) % escapes.length;
+  const pick = escapes[pickIdx];
+  const result = applyRivalMove(s, r, rivalIndex, pick.dir, pick.x, pick.y, events);
+  return {
+    ...result,
+    rival: {
+      ...result.rival,
+      unstickMovesLeft: Math.max(0, r.unstickMovesLeft - 1),
+      stuckMs: 0,
+      stuckAnchorX: result.rival.x,
+      stuckAnchorY: result.rival.y,
+    },
+  };
+}
+
+function applyRivalMovementStep(
+  s: GameState,
+  r: RivalEntity,
+  rivalIndex: number,
+  cpu: DifficultyConfig,
+  events: GameEvent[],
+): RivalStepResult {
+  if (r.unstickMovesLeft > 0) {
+    return rivalUnstickStep(s, r, rivalIndex, events);
+  }
+  return rivalPathStep(s, r, rivalIndex, cpu, events);
+}
+
+function trackRivalStuckState(
+  r: RivalEntity,
+  beforeX: number,
+  beforeY: number,
+  stepMs: number,
+): RivalEntity {
+  const moved = r.x !== beforeX || r.y !== beforeY;
+  if (moved) {
+    return {
+      ...r,
+      stuckMs: 0,
+      stuckAnchorX: r.x,
+      stuckAnchorY: r.y,
+    };
+  }
+  const stuckMs = r.stuckMs + stepMs;
+  if (stuckMs >= RIVAL_STUCK_DETECT_MS && r.unstickMovesLeft <= 0) {
+    return {
+      ...r,
+      stuckMs: 0,
+      unstickMovesLeft: RIVAL_UNSTICK_MOVE_COUNT,
+    };
+  }
+  return { ...r, stuckMs };
+}
+
+function updateNarrowCorridorState(r: RivalEntity, s: GameState): RivalEntity {
+  if (isNarrowCorridorCell(s.grid, r.x, r.y)) {
+    if (r.narrowCorridorSince < 0) {
+      return { ...r, narrowCorridorSince: s.elapsed };
+    }
+    return r;
+  }
+  if (r.narrowCorridorSince >= 0) {
+    return { ...r, narrowCorridorSince: -1 };
+  }
+  return r;
+}
+
+function trackPushStuckState(
+  r: RivalEntity,
+  rivalIndex: number,
+  moveResult: RivalStepResult,
+  beforeX: number,
+  beforeY: number,
+  stepMs: number,
+  s: GameState,
+): RivalEntity {
+  const moved = r.x !== beforeX || r.y !== beforeY;
+  if (moved) {
+    return { ...r, pushStuckMs: 0, pushBlockerIndex: null };
+  }
+
+  let blockerIndex: number | null = null;
+  if (moveResult.collision) {
+    blockerIndex = -1;
+  } else if (moveResult.rivalRivalCollision) {
+    blockerIndex = moveResult.rivalRivalCollision.blockerIndex;
+  } else if (moveResult.attemptDir) {
+    const { dx, dy } = DELTA[moveResult.attemptDir];
+    const tx = beforeX + dx;
+    const ty = beforeY + dy;
+    const rivalBlocker = findRivalIndexAt(s, tx, ty, rivalIndex);
+    if (rivalBlocker !== null) blockerIndex = rivalBlocker;
+    else if (s.player.x === tx && s.player.y === ty) blockerIndex = -1;
+  }
+
+  if (blockerIndex === null) {
+    return { ...r, pushStuckMs: 0, pushBlockerIndex: null };
+  }
+
+  const pushStuckMs =
+    r.pushBlockerIndex === blockerIndex ? r.pushStuckMs + stepMs : stepMs;
+
+  if (pushStuckMs >= RIVAL_PUSH_STUCK_MS && r.unstickMovesLeft <= 0) {
+    return {
+      ...r,
+      pushStuckMs: 0,
+      pushBlockerIndex: blockerIndex,
+      unstickMovesLeft: RIVAL_UNSTICK_MOVE_COUNT,
+    };
+  }
+  return { ...r, pushStuckMs, pushBlockerIndex: blockerIndex };
+}
+
+/** Goal-directed CPU step with route dispersion among near-optimal moves. */
 function rivalPathStep(
   s: GameState,
   r: RivalEntity,
@@ -438,7 +712,7 @@ function rivalPathStep(
     if (!t || t.done) {
       return { rival: r, collision: false, attemptDir: null, rivalRivalCollision: null };
     }
-    dist = pickShelfApproachDistMap(s.grid, t.x, t.y, r.x, r.y);
+    dist = pickShelfApproachDistMap(s.grid, t.x, t.y, r.x, r.y, r.id, r.routeSeed);
   } else {
     dist = pickGoalDistMap(s.grid, r.x, r.y);
   }
@@ -452,7 +726,11 @@ function rivalPathStep(
     return { rival: r, collision: false, attemptDir: null, rivalRivalCollision: null };
   }
 
-  const best = candidates[0];
+  const bestScore = candidates[0].score;
+  const tied = candidates.filter((c) => c.score <= bestScore + 0.3);
+  const pickIdx =
+    (r.id + Math.floor(s.elapsed / 400) + Math.floor(r.routeSeed * 10)) % tied.length;
+  const best = tied[pickIdx];
   return applyRivalMove(s, r, rivalIndex, best.dir, best.x, best.y, events);
 }
 
@@ -478,13 +756,20 @@ export type GameEvent =
       rivalWrongWay: boolean;
       playerPushed: boolean;
       rivalPushed: boolean;
+      /** Pitch seed for entity A (player or CPU mover). */
+      knockbackSeedA: number;
+      /** Pitch seed for entity B (rival or CPU blocker). */
+      knockbackSeedB: number;
     }
   | { type: 'skillUsed'; skill: SkillType }
   | { type: 'yield'; who: 'player' | 'rival' }
   | { type: 'win' }
   | { type: 'lose' };
 
-type CollisionEventDetail = Omit<Extract<GameEvent, { type: 'collision' }>, 'type' | 'involvesPlayer'>;
+type CollisionEventDetail = Omit<
+  Extract<GameEvent, { type: 'collision' }>,
+  'type' | 'involvesPlayer' | 'knockbackSeedA' | 'knockbackSeedB'
+>;
 
 function finalizePickingAfterCollision(
   s: GameState,
@@ -544,7 +829,13 @@ function finishCollisionFx(
     y: (player.y + rival.y) / 2 + 0.5,
   };
   s.lastCollisionElapsed = s.elapsed;
-  events.push({ type: 'collision', involvesPlayer: true, ...detail });
+  events.push({
+    type: 'collision',
+    involvesPlayer: true,
+    knockbackSeedA: 0,
+    knockbackSeedB: rival.id,
+    ...detail,
+  });
   return s;
 }
 
@@ -796,6 +1087,66 @@ function applyCollision(
   const pYield = !pWrong && !rWrong && rAggressor && !pAggressor && rivalDir;
   const rYield = !pWrong && !rWrong && pAggressor && !rAggressor && playerDir;
 
+  const inCorridor =
+    isNarrowCorridorCell(grid, px0, py0) || isNarrowCorridorCell(grid, rx0, ry0);
+
+  if (pAggressor && rAggressor && playerDir && rivalDir && !pWrong && !rWrong) {
+    if (inCorridor) {
+      if (rAggressor && rivalDir) {
+        const back = backFromCollision(grid, rx0, ry0, rivalDir, { x: px0, y: py0 });
+        rival = { ...rival, x: back.x, y: back.y };
+      } else if (pAggressor && playerDir) {
+        const back = backFromCollision(grid, px0, py0, playerDir, { x: rx0, y: ry0 });
+        player = { ...player, x: back.x, y: back.y };
+      }
+    } else {
+      const slideP = applyHeadOnSlide(
+        grid,
+        px0,
+        py0,
+        playerDir,
+        rx0,
+        ry0,
+        occupiers,
+        'left',
+      );
+      const slideR = applyHeadOnSlide(
+        grid,
+        rx0,
+        ry0,
+        rivalDir,
+        px0,
+        py0,
+        occupiers,
+        'right',
+      );
+      if (slideP.dir) {
+        player = {
+          ...player,
+          x: slideP.x,
+          y: slideP.y,
+          lastMoveDir: slideP.dir,
+          facing: slideP.dir,
+        };
+      }
+      if (slideR.dir) {
+        rival = {
+          ...rival,
+          x: slideR.x,
+          y: slideR.y,
+          lastMoveDir: slideR.dir,
+          facing: slideR.dir,
+        };
+      }
+    }
+  } else if (inCorridor && pAggressor && playerDir && !pWrong) {
+    const back = backFromCollision(grid, px0, py0, playerDir, { x: rx0, y: ry0 });
+    player = { ...player, x: back.x, y: back.y };
+  } else if (inCorridor && rAggressor && rivalDir && !rWrong) {
+    const back = backFromCollision(grid, rx0, ry0, rivalDir, { x: px0, y: py0 });
+    rival = { ...rival, x: back.x, y: back.y };
+  }
+
   const pxKnock = player.x;
   const pyKnock = player.y;
   const rxKnock = rival.x;
@@ -902,12 +1253,12 @@ function applyCollision(
 
   return finishCollisionFx(s, player, rivals, rivalIndex, events, {
     type: 'collision',
-    playerKnockedBack: pWrong,
-    rivalKnockedBack: rWrong,
+    playerKnockedBack: playerKnocked,
+    rivalKnockedBack: rivalKnocked,
     playerWrongWay: pWrong,
     rivalWrongWay: rWrong,
-    playerPushed: pWrong || pYield,
-    rivalPushed: rWrong || rYield,
+    playerPushed: playerKnocked || pYield,
+    rivalPushed: rivalKnocked || rYield,
   });
 }
 
@@ -946,7 +1297,13 @@ function finishRivalRivalCollisionFx(
     y: (rivals[indexA].y + rivals[indexB].y) / 2 + 0.5,
   };
   s.lastCollisionElapsed = s.elapsed;
-  events.push({ type: 'collision', involvesPlayer: false, ...detail });
+  events.push({
+    type: 'collision',
+    involvesPlayer: false,
+    knockbackSeedA: rivals[indexA].id,
+    knockbackSeedB: rivals[indexB].id,
+    ...detail,
+  });
   return s;
 }
 
@@ -1169,6 +1526,68 @@ function applyRivalRivalCollision(
   const aYield = !aWrong && !bWrong && bAggressor && !aAggressor && bDir;
   const bYield = !aWrong && !bWrong && aAggressor && !bAggressor && aDir;
 
+  const inCorridor =
+    isNarrowCorridorCell(grid, ax0, ay0) || isNarrowCorridorCell(grid, bx0, by0);
+
+  if (aAggressor && bAggressor && aDir && bDir && !aWrong && !bWrong) {
+    if (inCorridor) {
+      const aTime = a.narrowCorridorSince >= 0 ? a.narrowCorridorSince : s.elapsed;
+      const bTime = b.narrowCorridorSince >= 0 ? b.narrowCorridorSince : s.elapsed;
+      if (aTime >= bTime) {
+        const back = backFromCollision(grid, ax0, ay0, aDir, { x: bx0, y: by0 });
+        a = { ...a, x: back.x, y: back.y };
+      } else {
+        const back = backFromCollision(grid, bx0, by0, bDir, { x: ax0, y: ay0 });
+        b = { ...b, x: back.x, y: back.y };
+      }
+    } else {
+      const slideA = applyHeadOnSlide(
+        grid,
+        ax0,
+        ay0,
+        aDir,
+        bx0,
+        by0,
+        occupiers,
+        a.id % 2 === 0 ? 'left' : 'right',
+      );
+      const slideB = applyHeadOnSlide(
+        grid,
+        bx0,
+        by0,
+        bDir,
+        ax0,
+        ay0,
+        occupiers,
+        b.id % 2 === 0 ? 'left' : 'right',
+      );
+      if (slideA.dir) {
+        a = {
+          ...a,
+          x: slideA.x,
+          y: slideA.y,
+          lastMoveDir: slideA.dir,
+          facing: slideA.dir,
+        };
+      }
+      if (slideB.dir) {
+        b = {
+          ...b,
+          x: slideB.x,
+          y: slideB.y,
+          lastMoveDir: slideB.dir,
+          facing: slideB.dir,
+        };
+      }
+    }
+  } else if (inCorridor && aAggressor && aDir && !aWrong) {
+    const back = backFromCollision(grid, ax0, ay0, aDir, { x: bx0, y: by0 });
+    a = { ...a, x: back.x, y: back.y };
+  } else if (inCorridor && bAggressor && bDir && !bWrong) {
+    const back = backFromCollision(grid, bx0, by0, bDir, { x: ax0, y: ay0 });
+    b = { ...b, x: back.x, y: back.y };
+  }
+
   const axKnock = a.x;
   const ayKnock = a.y;
   const bxKnock = b.x;
@@ -1236,6 +1655,22 @@ function applyRivalRivalCollision(
   a = { ...a, x: sep.player.x, y: sep.player.y };
   b = { ...b, x: sep.rival.x, y: sep.rival.y };
 
+  if (a.x === b.x && a.y === b.y) {
+    const repA = applyRepulsionKnockback(grid, a.x, a.y, b.x, b.y, occupiers);
+    const repB = applyRepulsionKnockback(grid, b.x, b.y, a.x, a.y, occupiers);
+    a = { ...a, x: repA.x, y: repA.y };
+    b = { ...b, x: repB.x, y: repB.y };
+    const sep2 = separateIfOverlapping(
+      grid,
+      { x: a.x, y: a.y },
+      { x: b.x, y: b.y },
+      aWrong,
+      bWrong,
+    );
+    a = { ...a, x: sep2.player.x, y: sep2.player.y };
+    b = { ...b, x: sep2.rival.x, y: sep2.rival.y };
+  }
+
   const aKnocked = a.x !== axKnock || a.y !== ayKnock;
   const bKnocked = b.x !== bxKnock || b.y !== byKnock;
 
@@ -1255,12 +1690,12 @@ function applyRivalRivalCollision(
 
   return finishRivalRivalCollisionFx(s, rivals, moverIndex, blockerIndex, events, {
     type: 'collision',
-    playerKnockedBack: aWrong,
-    rivalKnockedBack: bWrong,
+    playerKnockedBack: aKnocked,
+    rivalKnockedBack: bKnocked,
     playerWrongWay: aWrong,
     rivalWrongWay: bWrong,
-    playerPushed: aWrong || bYield,
-    rivalPushed: bWrong || aYield,
+    playerPushed: aKnocked || aYield,
+    rivalPushed: bKnocked || bYield,
   });
 }
 
@@ -1594,5 +2029,16 @@ function stepOneRival(
     }
   }
 
-  return rivalPathStep(s, r, rivalIndex, cpu, events);
+  const beforeX = r.x;
+  const beforeY = r.y;
+  r = updateNarrowCorridorState(r, s);
+  const moveResult = applyRivalMovementStep(s, r, rivalIndex, cpu, events);
+  r = trackRivalStuckState(moveResult.rival, beforeX, beforeY, cpu.stepMs);
+  r = trackPushStuckState(r, rivalIndex, moveResult, beforeX, beforeY, cpu.stepMs, s);
+  return {
+    rival: r,
+    collision: moveResult.collision,
+    attemptDir: moveResult.attemptDir,
+    rivalRivalCollision: moveResult.rivalRivalCollision,
+  };
 }

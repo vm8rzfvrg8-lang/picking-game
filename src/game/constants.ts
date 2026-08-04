@@ -35,6 +35,20 @@ export interface RivalEntity {
   pickWaitTimer: number; // ms until pick starts (easy delay)
   /** True while stunned by 妨害電波 (Wi-Fi icon). */
   jamStun: boolean;
+  /** Ms without meaningful movement while pathing (stack detect). */
+  stuckMs: number;
+  stuckAnchorX: number;
+  stuckAnchorY: number;
+  /** Remaining forced sidestep moves to break deadlocks. */
+  unstickMovesLeft: number;
+  /** Per-CPU route dispersion seed in [0, 1). */
+  routeSeed: number;
+  /** Ms blocked while pushing the same entity. */
+  pushStuckMs: number;
+  /** Index of blocking rival, or -1 for player. */
+  pushBlockerIndex: number | null;
+  /** Elapsed time when entering current 1-wide corridor (-1 if none). */
+  narrowCorridorSince: number;
 }
 
 // A pick target: a bookshelf cell with location number and pick order
@@ -77,6 +91,12 @@ export const LEFT_DECOR_COLS = 10;
 /** Decorative header row above the warehouse (1 tile = top banner illustration). */
 export const TOP_DECOR_ROWS = 1;
 export const RIVAL_STEP_MS = 580; // rival moves one cell every this many ms
+/** CPU stack detection: no progress for this long triggers sidestep. */
+export const RIVAL_STUCK_DETECT_MS = 460;
+/** Sidestep moves executed when unsticking. */
+export const RIVAL_UNSTICK_MOVE_COUNT = 2;
+/** Push deadlock: yield after this long unable to advance past a blocker. */
+export const RIVAL_PUSH_STUCK_MS = 200;
 export const PLAYER_COOLDOWN_MS = 130; // player move cooldown
 export const COLLISION_STUN_MS = 1500; // legacy fallback
 export const COLLISION_STUN_LOSER_MS = 800;

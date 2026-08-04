@@ -320,6 +320,117 @@ export function applySimpleKnockback(
   return candidate;
 }
 
+/** True when the cell is a straight 1-tile-wide walkable corridor. */
+export function isNarrowCorridorCell(grid: Tile[][], x: number, y: number): boolean {
+  if (!isWalkable(grid, x, y)) return false;
+  const walkable: Direction[] = [];
+  for (const dir of ['up', 'down', 'left', 'right'] as Direction[]) {
+    const nx = x + DELTA[dir].dx;
+    const ny = y + DELTA[dir].dy;
+    if (isWalkable(grid, nx, ny)) walkable.push(dir);
+  }
+  if (walkable.length !== 2) return false;
+  return OPPOSITE[walkable[0]] === walkable[1];
+}
+
+/**
+ * Head-on block: slide into an open perpendicular cell instead of stopping.
+ * Returns the original position when no slide is possible.
+ */
+export function applyHeadOnSlide(
+  grid: Tile[][],
+  fromX: number,
+  fromY: number,
+  moveDir: Direction,
+  otherX: number,
+  otherY: number,
+  occupiers: ReadonlyArray<{ x: number; y: number }>,
+  preferFirst: 'left' | 'right' = 'left',
+): { x: number; y: number; dir: Direction | null } {
+  const perpDirs: Direction[] =
+    moveDir === 'left' || moveDir === 'right'
+      ? preferFirst === 'left'
+        ? ['up', 'down']
+        : ['down', 'up']
+      : preferFirst === 'left'
+        ? ['left', 'right']
+        : ['right', 'left'];
+
+  let dirTries = 0;
+  for (const dir of perpDirs) {
+    dirTries++;
+    if (dirTries > MAX_LOOP_ITERATIONS_PER_FRAME) break;
+    const nx = fromX + DELTA[dir].dx;
+    const ny = fromY + DELTA[dir].dy;
+    if (nx === otherX && ny === otherY) continue;
+    if (!isWalkable(grid, nx, ny)) continue;
+    let blocked = false;
+    let occupierChecks = 0;
+    for (const o of listOccupiedCells(occupiers, fromX, fromY)) {
+      occupierChecks++;
+      if (occupierChecks > MAX_LOOP_ITERATIONS_PER_FRAME) break;
+      if (o.x === nx && o.y === ny) {
+        blocked = true;
+        break;
+      }
+    }
+    if (!blocked) return { x: nx, y: ny, dir };
+  }
+  return { x: fromX, y: fromY, dir: null };
+}
+
+/** Push entity away from another; tries primary axis then perpendicular fallbacks. */
+export function applyRepulsionKnockback(
+  grid: Tile[][],
+  fromX: number,
+  fromY: number,
+  otherX: number,
+  otherY: number,
+  occupiers: ReadonlyArray<{ x: number; y: number }>,
+): { x: number; y: number } {
+  const dx = fromX - otherX;
+  const dy = fromY - otherY;
+  const preferDirs: Direction[] = [];
+  if (dx === 0 && dy === 0) {
+    preferDirs.push('up', 'down', 'left', 'right');
+  } else if (Math.abs(dx) >= Math.abs(dy)) {
+    preferDirs.push(
+      dx > 0 ? 'right' : 'left',
+      dy > 0 ? 'down' : 'up',
+      dy > 0 ? 'up' : 'down',
+      dx > 0 ? 'left' : 'right',
+    );
+  } else {
+    preferDirs.push(
+      dy > 0 ? 'down' : 'up',
+      dx > 0 ? 'right' : 'left',
+      dx > 0 ? 'left' : 'right',
+      dy > 0 ? 'up' : 'down',
+    );
+  }
+
+  let dirTries = 0;
+  for (const dir of preferDirs) {
+    dirTries++;
+    if (dirTries > MAX_LOOP_ITERATIONS_PER_FRAME) break;
+    const nx = fromX + DELTA[dir].dx;
+    const ny = fromY + DELTA[dir].dy;
+    if (!isWalkable(grid, nx, ny)) continue;
+    let blocked = false;
+    let occupierChecks = 0;
+    for (const o of listOccupiedCells(occupiers, fromX, fromY)) {
+      occupierChecks++;
+      if (occupierChecks > MAX_LOOP_ITERATIONS_PER_FRAME) break;
+      if (o.x === nx && o.y === ny && (o.x !== otherX || o.y !== otherY)) {
+        blocked = true;
+        break;
+      }
+    }
+    if (!blocked) return { x: nx, y: ny };
+  }
+  return { x: fromX, y: fromY };
+}
+
 /** If two entities share a cell, push the wrong-way one (or rival) to a free neighbor. */
 export function separateIfOverlapping(
   grid: Tile[][],
@@ -346,15 +457,46 @@ export function separateIfOverlapping(
 
   if (freeNeighbors.length === 0) return { player, rival };
 
-  // Prefer moving the wrong-way entity out; if both/neither, move rival
+  const pickFarthestPair = (cells: { x: number; y: number }[]) => {
+    if (cells.length === 1) return { a: cells[0], b: cells[0] };
+    let bestA = cells[0];
+    let bestB = cells[1];
+    let bestDist = -1;
+    for (let i = 0; i < cells.length; i++) {
+      for (let j = i + 1; j < cells.length; j++) {
+        const d =
+          Math.abs(cells[i].x - cells[j].x) + Math.abs(cells[i].y - cells[j].y);
+        if (d > bestDist) {
+          bestDist = d;
+          bestA = cells[i];
+          bestB = cells[j];
+        }
+      }
+    }
+    return { a: bestA, b: bestB };
+  };
+
+  // Mutual push: both step to different free neighbors when possible
+  if (freeNeighbors.length >= 2) {
+    const { a, b } = pickFarthestPair(freeNeighbors);
+    if (playerWrong && !rivalWrong) {
+      return { player: a, rival: b };
+    }
+    if (rivalWrong && !playerWrong) {
+      return { player: a, rival: b };
+    }
+    return { player: a, rival: b };
+  }
+
+  // Single escape cell — prefer moving the wrong-way party (or rival as fallback)
+  const dest = freeNeighbors[0];
   const moveRival =
     (rivalWrong && !playerWrong) || (!rivalWrong && !playerWrong) || (rivalWrong && playerWrong);
 
   if (moveRival) {
-    const dest = freeNeighbors[0];
     return { player, rival: dest };
   }
-  return { player: freeNeighbors[0], rival };
+  return { player: dest, rival };
 }
 
 /** Find a walkable cell one step sideways from (x,y), preferring sub-aisle direction. */
