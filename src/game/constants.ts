@@ -61,7 +61,12 @@ export const MAX_CPU_COUNT = 7;
 export const DEFAULT_CPU_COUNT = 7;
 
 export const PICK_COUNT = 30;
-export const PICK_DURATION_MS = 2500; // 2.5-second pick countdown
+export const PICK_DURATION_MS = 2000; // 2-second pick countdown
+
+/** Decorative break-room columns drawn left of the warehouse (10 tiles = bg illustration). */
+export const LEFT_DECOR_COLS = 10;
+/** Decorative header row above the warehouse (1 tile = top banner illustration). */
+export const TOP_DECOR_ROWS = 1;
 export const RIVAL_STEP_MS = 580; // rival moves one cell every this many ms
 export const PLAYER_COOLDOWN_MS = 130; // player move cooldown
 export const COLLISION_STUN_MS = 1500; // legacy fallback
@@ -143,6 +148,10 @@ export interface GameState {
   skills: SkillState;
   /** Per-CPU skill gauge/effects (for ゴリ押し etc.). */
   rivalSkills: SkillState[];
+  /** Consecutive pick combo count (display); speed caps at tier 5. */
+  pickCombo: number;
+  /** Game elapsed (ms) when the last pick succeeded; -1 = none yet. */
+  lastPickSuccessElapsed: number;
 }
 
 export function clampCpuCount(count: number): number {

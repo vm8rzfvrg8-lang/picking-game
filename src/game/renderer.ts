@@ -1,7 +1,18 @@
-import { COLORS, GameState, GRID_H, GRID_W, RIVAL_PALETTE, TILE } from './constants';
+import { COLORS, GameState, GRID_H, GRID_W, LEFT_DECOR_COLS, RIVAL_PALETTE, TILE, TOP_DECOR_ROWS } from './constants';
 import type { CullBounds } from './camera';
+import { gridWorldX, gridWorldY } from './camera';
+import {
+  decorWorldHeight,
+  decorWorldWidth,
+  drawBreakRoomBackground,
+} from './breakRoomBackground';
+import {
+  drawTopHeaderBackground,
+  topHeaderWorldHeight,
+  topHeaderWorldWidth,
+} from './topHeaderBackground';
 import { drawFlowArrow, drawMainAisleCenterLine, flowAt, isWrongWay } from './flow';
-import { isGoalCell, isShelf, isStartCorridorX, shelfLocationKey, START_ZONE_X_MIN } from './levelgen';
+import { isGoalCell, isShelf, isStartCorridorX, isStartLineColumn, LEFT_SHELF_ROUTE_X, MAIN_AISLE_Y_BOTTOM, shelfLocationKey, START_ZONE_X_MIN } from './levelgen';
 
 export interface RenderOpts {
   blink: number;
@@ -10,11 +21,13 @@ export interface RenderOpts {
 }
 
 function tileRange(cull: CullBounds) {
+  const decorPx = LEFT_DECOR_COLS * TILE;
+  const topPx = TOP_DECOR_ROWS * TILE;
   return {
-    minGX: Math.max(0, Math.floor(cull.minX / TILE)),
-    maxGX: Math.min(GRID_W - 1, Math.ceil(cull.maxX / TILE) - 1),
-    minGY: Math.max(0, Math.floor(cull.minY / TILE)),
-    maxGY: Math.min(GRID_H - 1, Math.ceil(cull.maxY / TILE) - 1),
+    minGX: Math.max(0, Math.floor((cull.minX - decorPx) / TILE)),
+    maxGX: Math.min(GRID_W - 1, Math.ceil((cull.maxX - decorPx) / TILE) - 1),
+    minGY: Math.max(0, Math.floor((cull.minY - topPx) / TILE)),
+    maxGY: Math.min(GRID_H - 1, Math.ceil((cull.maxY - topPx) / TILE) - 1),
   };
 }
 
@@ -24,8 +37,8 @@ function px(v: number): number {
 }
 
 function isCellVisible(gx: number, gy: number, cull: CullBounds): boolean {
-  const ox = gx * TILE;
-  const oy = gy * TILE;
+  const ox = gridWorldX(gx);
+  const oy = gridWorldY(gy);
   return ox + TILE > cull.minX && ox < cull.maxX && oy + TILE > cull.minY && oy < cull.maxY;
 }
 
@@ -100,6 +113,31 @@ function drawPassageFloorTile(
   }
 }
 
+function drawStartLineCheckerTile(
+  ctx: CanvasRenderingContext2D,
+  ox: number,
+  oy: number,
+  gy: number,
+) {
+  const cell = 6;
+  for (let cy = 0; cy < TILE; cy += cell) {
+    for (let cx = 0; cx < TILE; cx += cell) {
+      const dark =
+        (Math.floor(cx / cell) + Math.floor(cy / cell) + gy) % 2 === 0;
+      ctx.fillStyle = dark ? '#141418' : '#ececec';
+      ctx.fillRect(ox + cx, oy + cy, cell, cell);
+    }
+  }
+
+  if (gy === MAIN_AISLE_Y_BOTTOM) {
+    ctx.fillStyle = '#1a1a1a';
+    ctx.font = 'bold 7px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('START', ox + TILE / 2, oy + TILE / 2);
+  }
+}
+
 function drawStartCorridorTile(
   ctx: CanvasRenderingContext2D,
   ox: number,
@@ -107,14 +145,16 @@ function drawStartCorridorTile(
   gx: number,
   gy: number,
 ) {
-  const isLeftEdge = gx === START_ZONE_X_MIN;
+  if (isStartLineColumn(gx)) {
+    drawStartLineCheckerTile(ctx, ox, oy, gy);
+    return;
+  }
+
+  const isLeftEdge = gx === START_ZONE_X_MIN + 1;
   ctx.fillStyle = isLeftEdge ? START_FLOOR.base : '#363c4a';
   ctx.fillRect(ox, oy, TILE, TILE);
 
-  if (isLeftEdge) {
-    ctx.fillStyle = START_FLOOR.edge;
-    ctx.fillRect(ox, oy + 5, 2, TILE - 10);
-  } else {
+  if (!isLeftEdge) {
     ctx.fillStyle = 'rgba(201,162,39,0.18)';
     ctx.fillRect(ox, oy + TILE - 2, TILE, 1);
     ctx.fillRect(ox + TILE - 1, oy, 1, TILE);
@@ -169,7 +209,63 @@ export function applyRetroColorFilter(
 }
 
 export function render(ctx: CanvasRenderingContext2D, state: GameState, opts: RenderOpts) {
+  drawTopDecor(ctx, opts.cull);
+  drawLeftDecor(ctx, opts.cull);
+  ctx.save();
+  ctx.translate(LEFT_DECOR_COLS * TILE, TOP_DECOR_ROWS * TILE);
   renderInternal(ctx, state, opts);
+  ctx.restore();
+}
+
+/** Top header strip — single PNG (or dummy) across decor + warehouse width. */
+export function drawTopDecor(ctx: CanvasRenderingContext2D, cull?: CullBounds) {
+  const w = topHeaderWorldWidth();
+  const h = topHeaderWorldHeight();
+  if (cull && (cull.minX >= w || cull.maxX <= 0 || cull.maxY <= 0 || cull.minY >= h)) return;
+
+  ctx.save();
+  if (cull) {
+    const clipX = Math.max(0, cull.minX);
+    const clipY = Math.max(0, cull.minY);
+    const clipW = Math.min(w, cull.maxX) - clipX;
+    const clipH = Math.min(h, cull.maxY) - clipY;
+    if (clipW <= 0 || clipH <= 0) {
+      ctx.restore();
+      return;
+    }
+    ctx.beginPath();
+    ctx.rect(clipX, clipY, clipW, clipH);
+    ctx.clip();
+  }
+
+  drawTopHeaderBackground(ctx, 0, 0, w, h);
+  ctx.restore();
+}
+
+/** Left illustration strip — single PNG (or dummy) across 10 tiles. */
+export function drawLeftDecor(ctx: CanvasRenderingContext2D, cull?: CullBounds) {
+  const w = decorWorldWidth();
+  const h = decorWorldHeight();
+  const oy = TOP_DECOR_ROWS * TILE;
+  if (cull && (cull.minX >= w || cull.maxX <= 0 || cull.minY >= oy + h || cull.maxY <= oy)) return;
+
+  ctx.save();
+  if (cull) {
+    const clipX = Math.max(0, cull.minX);
+    const clipY = Math.max(oy, cull.minY);
+    const clipW = Math.min(w, cull.maxX) - clipX;
+    const clipH = Math.min(oy + h, cull.maxY) - clipY;
+    if (clipW <= 0 || clipH <= 0) {
+      ctx.restore();
+      return;
+    }
+    ctx.beginPath();
+    ctx.rect(clipX, clipY, clipW, clipH);
+    ctx.clip();
+  }
+
+  drawBreakRoomBackground(ctx, 0, oy, w, h);
+  ctx.restore();
 }
 
 export interface CharacterDrawOpts {
@@ -254,13 +350,27 @@ export function drawCollisionFxAt(
   drawCollisionFx(ctx, gx, gy, timer);
 }
 
+function drawFloorBaseTile(
+  ctx: CanvasRenderingContext2D,
+  ox: number,
+  oy: number,
+  gx: number,
+  gy: number,
+) {
+  if (isStartCorridorX(gx) && gx !== LEFT_SHELF_ROUTE_X) {
+    drawStartCorridorTile(ctx, ox, oy, gx, gy);
+  } else {
+    drawPassageFloorTile(ctx, ox, oy, gx, gy);
+  }
+}
+
 export function eraseFloorCell(ctx: CanvasRenderingContext2D, state: GameState, gx: number, gy: number) {
   const t = state.grid[gy]?.[gx];
   if (t !== 'F' && t !== 'G') return;
   const ox = gx * TILE;
   const oy = gy * TILE;
   if (t === 'F') {
-    drawPassageFloorTile(ctx, ox, oy, gx, gy);
+    drawFloorBaseTile(ctx, ox, oy, gx, gy);
   } else {
     drawLegacyFloorBase(ctx, ox, oy, gx, gy);
     drawGoalCell(ctx, ox, oy);
@@ -320,7 +430,7 @@ function renderInternal(ctx: CanvasRenderingContext2D, state: GameState, opts: R
 
   const pt = state.targets[state.currentTarget];
   if (pt && !pt.done && (!cull || isCellVisible(pt.x, pt.y, cull))) {
-    drawTargetGlow(ctx, pt.x, pt.y, opts.blink, COLORS.glow, true);
+    drawTargetGlow(ctx, pt.x, pt.y, opts.blink, true);
   }
 
   if (state.tutorialReachCell && (!cull || isCellVisible(state.tutorialReachCell.x, state.tutorialReachCell.y, cull))) {
@@ -329,7 +439,6 @@ function renderInternal(ctx: CanvasRenderingContext2D, state: GameState, opts: R
       state.tutorialReachCell.x,
       state.tutorialReachCell.y,
       opts.blink,
-      COLORS.glow,
       false,
     );
   }
@@ -382,11 +491,7 @@ function drawFloor(
       const oy = y * TILE;
 
       if (t === 'F') {
-        if (isStartCorridorX(x)) {
-          drawStartCorridorTile(ctx, ox, oy, x, y);
-        } else {
-          drawPassageFloorTile(ctx, ox, oy, x, y);
-        }
+        drawFloorBaseTile(ctx, ox, oy, x, y);
       } else {
         drawLegacyFloorBase(ctx, ox, oy, x, y);
       }
@@ -545,44 +650,38 @@ function drawTargetGlow(
   gx: number,
   gy: number,
   blink: number,
-  color: string,
   showArrow: boolean,
 ) {
   const ox = gx * TILE;
   const oy = gy * TILE;
-  const pulse = 0.5 + 0.5 * Math.sin(blink * Math.PI * 2 * (showArrow ? 2.2 : 1.5));
-  const rgb = hexToRgb(color);
-  const intensity = showArrow ? 1.25 : 0.75;
-  const alpha = (0.35 + 0.25 * pulse) * intensity;
+  const pulse = 0.5 + 0.5 * Math.sin(blink * Math.PI * 2 * 3.2);
+  const alpha = 0.55 + 0.4 * pulse;
 
-  ctx.fillStyle = `rgba(${rgb},${alpha * 0.35})`;
+  ctx.fillStyle = `rgba(255, 160, 32, ${alpha * 0.55})`;
+  ctx.fillRect(ox - 3, oy - 3, TILE + 6, TILE + 6);
+
+  ctx.fillStyle = `rgba(255, 200, 64, ${alpha * 0.35})`;
   ctx.fillRect(ox, oy, TILE, TILE);
 
-  ctx.strokeStyle = `rgba(${rgb},${(0.85 + 0.15 * pulse) * intensity})`;
-  ctx.lineWidth = showArrow ? 3 : 1.5;
-  ctx.setLineDash(showArrow ? [6, 3] : [3, 5]);
+  ctx.strokeStyle = `rgba(255, 220, 80, ${0.85 + 0.15 * pulse})`;
+  ctx.lineWidth = showArrow ? 4 : 2;
+  ctx.setLineDash(showArrow ? [] : [4, 3]);
   ctx.strokeRect(ox + 1, oy + 1, TILE - 2, TILE - 2);
   ctx.setLineDash([]);
 
   if (showArrow) {
     const ax = px(ox + TILE / 2);
-    const ay = px(oy - 8 - pulse * 5);
-    ctx.fillStyle = color;
+    const ay = px(oy - 10 - pulse * 6);
+    ctx.fillStyle = '#ffb830';
     ctx.beginPath();
-    ctx.moveTo(ax, ay + 8);
-    ctx.lineTo(ax - 6, ay);
-    ctx.lineTo(ax + 6, ay);
+    ctx.moveTo(ax, ay + 10);
+    ctx.lineTo(ax - 7, ay);
+    ctx.lineTo(ax + 7, ay);
     ctx.closePath();
     ctx.fill();
+    ctx.fillStyle = '#fff8e0';
+    ctx.fillRect(ax - 2, ay + 2, 4, 4);
   }
-}
-
-function hexToRgb(hex: string): string {
-  const h = hex.replace('#', '');
-  const r = parseInt(h.substring(0, 2), 16);
-  const g = parseInt(h.substring(2, 4), 16);
-  const b = parseInt(h.substring(4, 6), 16);
-  return `${r},${g},${b}`;
 }
 
 function drawGoals(

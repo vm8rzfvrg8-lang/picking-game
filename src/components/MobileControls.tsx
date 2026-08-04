@@ -27,6 +27,10 @@ function dirFromPoint(
   return dy > 0 ? 'down' : 'up';
 }
 
+function dirBtnClass(active: Direction | null, dir: Direction): string {
+  return `mobile-controls-pad__btn${active === dir ? ' mobile-controls-pad__btn--active' : ''}`;
+}
+
 // On-screen D-pad for touch devices. Supports multi-touch (move + skill simultaneously).
 export function MobileControls({ onDir, docked = false }: Props) {
   const [active, setActive] = useState<Direction | null>(null);
@@ -97,17 +101,11 @@ export function MobileControls({ onDir, docked = false }: Props) {
     [releasePointer],
   );
 
-  const btnClass =
-    'pointer-events-none flex items-center justify-center rounded-md border border-white/15 bg-black/25 text-white/75 select-none';
-
-  const padSize = docked ? 'h-[7.5rem] w-[7.5rem] sm:h-[8rem] sm:w-[8rem]' : 'h-40 w-40';
-  const iconSize = docked ? 'h-5 w-5' : 'h-6 w-6';
-
   return (
     <div className={`mobile-controls no-select ${docked ? 'mobile-controls--docked' : ''}`}>
       <div
         ref={padRef}
-        className={`relative grid ${padSize} grid-cols-3 grid-rows-3 gap-0.5`}
+        className={`mobile-controls-pad${docked ? ' mobile-controls-pad--docked' : ''}${active ? ' mobile-controls-pad--pressed' : ''}`}
         style={{ touchAction: 'none' }}
         onPointerDown={onPadPointerDown}
         onPointerMove={onPadPointerMove}
@@ -115,28 +113,28 @@ export function MobileControls({ onDir, docked = false }: Props) {
         onPointerCancel={onPadPointerCancel}
         onContextMenu={(e) => e.preventDefault()}
       >
-        <div />
-        <div className={btnClass}>
-          <ChevronUp className={iconSize} />
+        <div className="mobile-controls-pad__grid">
+          <div className="mobile-controls-pad__spacer" />
+          <div className={dirBtnClass(active, 'up')}>
+            <ChevronUp className="mobile-controls-pad__icon" aria-hidden />
+          </div>
+          <div className="mobile-controls-pad__spacer" />
+          <div className={dirBtnClass(active, 'left')}>
+            <ChevronLeft className="mobile-controls-pad__icon" aria-hidden />
+          </div>
+          <div className="mobile-controls-pad__hub" aria-hidden />
+          <div className={dirBtnClass(active, 'right')}>
+            <ChevronRight className="mobile-controls-pad__icon" aria-hidden />
+          </div>
+          <div className="mobile-controls-pad__spacer" />
+          <div className={dirBtnClass(active, 'down')}>
+            <ChevronDown className="mobile-controls-pad__icon" aria-hidden />
+          </div>
+          <div className="mobile-controls-pad__spacer" />
         </div>
-        <div />
-        <div className={btnClass}>
-          <ChevronLeft className={iconSize} />
-        </div>
-        <div className="flex items-center justify-center">
-          <span className={`rounded-full ${active ? 'h-2.5 w-2.5 bg-[#3bd4ff]/90' : 'h-2 w-2 bg-white/25'}`} />
-        </div>
-        <div className={btnClass}>
-          <ChevronRight className={iconSize} />
-        </div>
-        <div />
-        <div className={btnClass}>
-          <ChevronDown className={iconSize} />
-        </div>
-        <div />
       </div>
       {!docked && (
-        <p className="text-center text-[10px] text-[#5a6a8d]">光る棚の方向を長押しでピッキング</p>
+        <p className="mobile-controls-hint">光る棚の方向を長押しでピッキング</p>
       )}
     </div>
   );

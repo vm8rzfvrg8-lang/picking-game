@@ -22,14 +22,17 @@ import {
   isWrongWay,
   separateIfOverlapping,
 } from './flow';
+import {
+  registerPickComboSuccess,
+  tickComboExpiry,
+} from './combo';
 import { createInitialSkills, isPushThroughActive, isSuperSpeedActive, tickSkills, useSkill, SkillType } from './skills';
 import { tutorialRivalPatrolDir } from './tutorial/layout';
 import {
+  assignStartSpawns,
   assignTargets,
   bfsDistances,
   buildShelfLocationMap,
-  findCpuSpawnPoints,
-  findPlayerSpawn,
   findWalkableNear,
   generateLibrary,
   GOAL_CELLS,
@@ -120,15 +123,15 @@ export function newGame(
   const { grid, shelfCells } = generateLibrary(rng);
   const shelfLocations = buildShelfLocationMap(shelfCells);
 
-  const playerSpawn = findPlayerSpawn(grid);
+  const spawns = assignStartSpawns(grid, count);
+  let playerSpawn = spawns.player;
   if (!isWalkable(grid, playerSpawn.x, playerSpawn.y)) {
     const near = findWalkableNear(grid, 'tl');
-    playerSpawn.x = near.x;
-    playerSpawn.y = near.y;
+    playerSpawn = near;
   }
 
   const targets = assignTargets(shelfCells, shelfLocations, rng);
-  const cpuSpawns = findCpuSpawnPoints(grid, playerSpawn, count);
+  const cpuSpawns = spawns.cpus;
   const rivals = cpuSpawns.map((spawn, id) =>
     createRivalEntity(id, spawn, shelfCells, shelfLocations, rng),
   );
@@ -172,6 +175,8 @@ export function newGame(
     selectedSkill,
     skills: createInitialSkills(),
     rivalSkills: Array.from({ length: count }, () => createInitialSkills()),
+    pickCombo: 0,
+    lastPickSuccessElapsed: -1,
   };
 }
 
@@ -454,6 +459,7 @@ export type GameEvent =
   | { type: 'pickStart'; who: 'player' | 'rival' }
   | { type: 'pickProgress'; who: 'player' | 'rival'; progress: number }
   | { type: 'pickDone'; who: 'player' | 'rival'; index: number; entityId?: number }
+  | { type: 'pickCombo'; combo: number; tier: number }
   | { type: 'pickCancel'; who: 'player' | 'rival' }
   | {
       type: 'collision';
@@ -1258,6 +1264,11 @@ export function step(state: GameState, input: Input, dtMs: number): StepResult {
   s = tickSkills(s, dtMs);
   s.elapsed += dtMs;
 
+  const comboTick = tickComboExpiry(s.pickCombo, s.lastPickSuccessElapsed, s.elapsed);
+  if (comboTick.expired) {
+    s.pickCombo = 0;
+  }
+
   if (input.useSkill) {
     const used = useSkill(s);
     s = used.state;
@@ -1327,7 +1338,17 @@ export function step(state: GameState, input: Input, dtMs: number): StepResult {
           s.targets = s.targets.map((t, i) =>
             i === s.currentTarget ? { ...t, done: true } : t,
           );
+          const comboResult = registerPickComboSuccess(
+            s.pickCombo,
+            s.lastPickSuccessElapsed,
+            s.elapsed,
+          );
+          s.pickCombo = comboResult.combo;
+          s.lastPickSuccessElapsed = s.elapsed;
           events.push({ type: 'pickDone', who: 'player', index: s.currentTarget });
+          if (comboResult.chained) {
+            events.push({ type: 'pickCombo', combo: comboResult.combo, tier: comboResult.tier });
+          }
           s.currentTarget += 1;
         }
       }

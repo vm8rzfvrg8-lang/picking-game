@@ -1,0 +1,8 @@
+# Left background illustration
+
+Place your break-room / office background PNG here:
+
+- **File name:** `break-room-bg.png`
+- **Recommended size:** 360 × 504 px (10 tiles × 36 px wide, 14 tiles × 36 px tall)
+
+Until this file exists, the game shows a gray checkerboard placeholder.

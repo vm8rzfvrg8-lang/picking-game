@@ -95,7 +95,7 @@ function RulesModal({ onClose }: { onClose: () => void }) {
             <p>
               本棚の<strong className="text-[#3bd4ff]">隣</strong>で、
               <span className="font-bold text-[#3bd4ff]">その棚の方向キーを長押し</span>。
-              ゲージが満タン（約2.5秒）で1冊ゲット。離すとキャンセル。
+              ゲージが満タン（約2.0秒）で1冊ゲット。離すとキャンセル。
             </p>
           </div>
           <div className="flex items-start gap-2">
@@ -292,7 +292,7 @@ export function StartScreen({
             <p className="start-screen-controls max-w-[640px] text-center text-[9px] leading-snug text-[#5a6a8d] sm:text-[10px]">
               PC: 矢印/WASD 移動 · Shift=スキル / スマホ: Dパッド+スキルボタン
               <br />
-              ピック: 光る本棚の方向キーを長押し（約2.5秒）
+              ピック: 光る本棚の方向キーを長押し（約2.0秒）
             </p>
             <div className="flex w-full max-w-[420px] items-center justify-center gap-2 sm:gap-3">
               <button

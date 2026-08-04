@@ -1,4 +1,4 @@
-import { GRID_H, GRID_W, TILE, VIEWPORT_H, VIEWPORT_W } from './constants';
+import { GRID_H, GRID_W, LEFT_DECOR_COLS, TOP_DECOR_ROWS, TILE, VIEWPORT_H, VIEWPORT_W } from './constants';
 
 export interface CameraOffset {
   cameraX: number;
@@ -23,19 +23,34 @@ function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
-/** Fit map height to screen; follow player horizontally. */
+/** World-space X for a grid column (includes left decor padding). */
+export function gridWorldX(gridX: number): number {
+  return (gridX + LEFT_DECOR_COLS) * TILE;
+}
+
+/** World-space Y for a grid row (includes top header padding). */
+export function gridWorldY(gridY: number): number {
+  return (gridY + TOP_DECOR_ROWS) * TILE;
+}
+
+/** Pixel offsets applied before grid-local drawing passes. */
+export function gridDecorOffset(): { x: number; y: number } {
+  return { x: LEFT_DECOR_COLS * TILE, y: TOP_DECOR_ROWS * TILE };
+}
+
+/** Fit map height to screen; follow player horizontally (centered with decor pad). */
 export function computeCameraTransform(
   playerGridX: number,
   viewW: number,
   viewH: number,
 ): CameraState {
-  const worldH = GRID_H * TILE;
-  const worldW = GRID_W * TILE;
+  const worldH = (GRID_H + TOP_DECOR_ROWS) * TILE;
+  const worldW = (GRID_W + LEFT_DECOR_COLS) * TILE;
   const scale = viewH / worldH;
   const viewWorldW = viewW / scale;
   const viewWorldH = worldH;
 
-  const centerX = playerGridX * TILE + TILE / 2;
+  const centerX = gridWorldX(playerGridX) + TILE / 2;
   const cameraX = clamp(centerX - viewWorldW / 2, 0, Math.max(0, worldW - viewWorldW));
 
   return { cameraX, cameraY: 0, scale, viewWorldW, viewWorldH };

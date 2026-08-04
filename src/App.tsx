@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { GameState, DEFAULT_CPU_COUNT } from './game/constants';
-import { computeCameraTransform, cullBoundsFromCamera, type CameraState } from './game/camera';
+import { GameState, DEFAULT_CPU_COUNT, PLAYER_COOLDOWN_MS, TILE } from './game/constants';
+import { getComboCanvasColor, getComboMoveCooldown } from './game/combo';
+import { computeCameraTransform, cullBoundsFromCamera, gridDecorOffset, type CameraState } from './game/camera';
 import { Difficulty } from './game/difficulty';
 import { Direction, Input, isPickInput, newGame, startPlaying, enterTutorial, returnToStart, step } from './game/engine';
 import {
@@ -19,7 +20,10 @@ import { useCanvasResize } from './hooks/useCanvasResize';
 import { StartScreen } from './components/StartScreen';
 import { TutorialScene } from './components/TutorialScene';
 import { GameplayTopBar } from './components/GameplayTopBar';
-import { LeaderboardSidebar } from './components/LeaderboardSidebar';
+import { RaceProgressHud } from './components/RaceProgressHud';
+import { ComboHud } from './components/ComboHud';
+import { loadBreakRoomBackground } from './game/breakRoomBackground';
+import { loadTopHeaderBackground } from './game/topHeaderBackground';
 import { SkillButton } from './components/SkillButton';
 import { MobileControls } from './components/MobileControls';
 import { ResultOverlay } from './components/ResultOverlay';
@@ -44,6 +48,7 @@ import {
   getShakeOffset,
   resetVfx,
   triggerCollisionShake,
+  triggerComboPop,
   triggerGoalUnlock,
   triggerPickComplete,
   triggerSkillActivate,
@@ -52,8 +57,6 @@ import {
   updateVfx,
   type VfxState,
 } from './game/vfx';
-
-const PLAYER_COOLDOWN_MS = 130;
 
 function snapCameraTo(
   cameraRef: React.MutableRefObject<CameraState>,
@@ -273,7 +276,10 @@ export default function App() {
       const kb = kbRef.current;
       const dir = tutorialInputActive ? touchDirRef.current ?? kb.dir : null;
       const pick = tutorialInputActive ? isPickInput(g, dir) : false;
-      const moveCooldown = getSuperSpeedMoveCooldown(PLAYER_COOLDOWN_MS, g.skills);
+      const moveCooldown = getComboMoveCooldown(
+        getSuperSpeedMoveCooldown(PLAYER_COOLDOWN_MS, g.skills),
+        g.pickCombo,
+      );
 
       const input: Input = { dir: null, pick, useSkill: skillUseRef.current };
       skillUseRef.current = false;
@@ -299,6 +305,8 @@ export default function App() {
           sfx.pickup();
           const t = res.state.targets[ev.index];
           if (t) triggerPickComplete(vfx, t.x, t.y, 'player', t.locationNumber);
+        } else if (ev.type === 'pickCombo') {
+          triggerComboPop(vfx, res.state.player.x, res.state.player.y, ev.combo);
         } else if (ev.type === 'pickDone' && ev.who === 'rival') {
           sfx.pickup();
           const rival =
@@ -390,6 +398,9 @@ export default function App() {
         ctx.scale(cam.scale, cam.scale);
         ctx.translate(-cam.cameraX, -cam.cameraY);
         render(ctx, gameRef.current, { blink: blinkRef.current, cull });
+        ctx.save();
+        const decor = gridDecorOffset();
+        ctx.translate(decor.x, decor.y);
         drawVfx(ctx, vfxRef.current, cull);
         if (gameRef.current.phase !== 'start') {
           drawSmoothEntities(
@@ -408,6 +419,7 @@ export default function App() {
             blinkRef.current,
           );
         }
+        ctx.restore();
         ctx.restore();
         applyRetroColorFilter(ctx, viewW, viewH);
       }
@@ -472,6 +484,11 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [beginGame, resetGame, handleUseSkill]);
 
+  useEffect(() => {
+    loadBreakRoomBackground();
+    loadTopHeaderBackground();
+  }, []);
+
   const handleTouchDir = useCallback((d: Direction | null) => {
     touchDirRef.current = d;
   }, []);
@@ -514,7 +531,10 @@ export default function App() {
           )}
         </div>
 
-        {game.phase === 'playing' && <LeaderboardSidebar game={game} />}
+        {game.phase === 'playing' && <RaceProgressHud game={game} />}
+        {(game.phase === 'playing' || game.phase === 'tutorial') && (
+          <ComboHud game={game} />
+        )}
 
         {showDpad && (
           <div className="game-controls-dpad game-controls-overlay">
@@ -595,11 +615,15 @@ function drawSmoothEntities(
   drawCharacterAt(ctx, playerVisual.x, playerVisual.y, state.player.facing, blink, state.player.stun > 0, 'player', {
     moving: pMoving,
     squash: pMoving ? 0.9 : 1,
-    speedBoost: isSuperSpeedActive(state.skills),
+    speedBoost: isSuperSpeedActive(state.skills) || state.pickCombo > 0,
     pushThrough: isPushThroughActive(state.skills),
   });
   if (state.isPicking) {
     drawPickGaugeAt(ctx, playerVisual.x, playerVisual.y, state.pickProgress, 'player');
+  }
+
+  if (state.pickCombo > 0) {
+    drawComboFloater(ctx, playerVisual.x, playerVisual.y, state.pickCombo, blink);
   }
 
   drawPlayerMarkerAt(ctx, playerVisual.x, playerVisual.y, blink);
@@ -607,4 +631,27 @@ function drawSmoothEntities(
   if (state.collisionFx > 0 && state.collisionPos) {
     drawCollisionFxAt(ctx, state.collisionPos.x, state.collisionPos.y, state.collisionFx);
   }
+}
+
+function drawComboFloater(
+  ctx: CanvasRenderingContext2D,
+  fx: number,
+  fy: number,
+  combo: number,
+  blink: number,
+) {
+  const pulse = 0.82 + 0.18 * Math.sin(blink * Math.PI * 4);
+  const cx = fx * TILE + TILE / 2;
+  const cy = fy * TILE - 24;
+  const color = getComboCanvasColor(combo, performance.now() / 1000);
+  ctx.save();
+  ctx.globalAlpha = 0.82 * pulse;
+  ctx.font = 'bold 9px monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.fillText(`${combo} COMBO!`, cx + 1, cy + 1);
+  ctx.fillStyle = color;
+  ctx.fillText(`${combo} COMBO!`, cx, cy);
+  ctx.restore();
 }

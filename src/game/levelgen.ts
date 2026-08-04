@@ -4,10 +4,16 @@ import { GRID_H, GRID_W, PICK_COUNT, PickTarget, Tile } from './constants';
 export const MAIN_AISLE_Y_TOP = 6;
 export const MAIN_AISLE_Y_BOTTOM = 7;
 
-/** Left edge of the start hall (inclusive). Wall is at x=0. */
+/** Left edge of the start hall (inclusive). Grid x=1 = world tile 11 after 10 decor cols. */
 export const START_ZONE_X_MIN = 1;
+/** Start-line spawn column (same as hall left edge — characters line up here). */
+export const START_LINE_X = START_ZONE_X_MIN;
 /** Right edge of the start hall (inclusive) — 3-column free-movement zone. */
 export const START_ZONE_X_MAX = 3;
+
+/** Course progress endpoints for the racing HUD. */
+export const COURSE_START_X = START_ZONE_X_MIN;
+export const COURSE_GOAL_X = GRID_W - 1;
 /** @deprecated Use START_ZONE_X_MIN */
 export const START_CORRIDOR_X = START_ZONE_X_MIN;
 
@@ -39,7 +45,45 @@ export function shelfLocationKey(x: number, y: number): string {
 
 const UPPER_SHELF_YS = [2, 3, 4, 5] as const;
 const LOWER_SHELF_YS = [8, 9, 10, 11] as const;
-const LEFTMOST_SHELF_X = 4;
+export const LEFTMOST_SHELF_X = 4;
+/** Outermost walkable horizontal passage rows (y=0 / y=max are walls). */
+export const TOP_PERIMETER_PASSAGE_Y = 1;
+export const BOTTOM_PERIMETER_PASSAGE_Y = GRID_H - 2;
+
+/** Top/bottom perimeter: x=3 → right edge, all right-facing lanes. */
+export function perimeterPassageFlowAt(x: number, y: number): 'right' | null {
+  if (x < LEFT_SHELF_ROUTE_X || x > GRID_W - 2) return null;
+  if (y === TOP_PERIMETER_PASSAGE_Y || y === BOTTOM_PERIMETER_PASSAGE_Y) return 'right';
+  return null;
+}
+
+/** Vertical passage immediately left of shelves 1–8 (x=3). */
+export const LEFT_SHELF_ROUTE_X = START_ZONE_X_MAX;
+
+/** One-way flow on the x=3 aisle beside shelves 1–8 (null = no lane rule here). */
+export function leftShelfRouteFlowAt(
+  x: number,
+  y: number,
+): 'up' | 'left' | 'right' | null {
+  if (x !== LEFT_SHELF_ROUTE_X) return null;
+  if (y === MAIN_AISLE_Y_TOP) return 'right';
+  if (y === MAIN_AISLE_Y_BOTTOM) return 'left';
+  if (
+    (UPPER_SHELF_YS as readonly number[]).includes(y) ||
+    (LOWER_SHELF_YS as readonly number[]).includes(y)
+  ) {
+    return 'up';
+  }
+  return null;
+}
+
+export function isLeftShelfRouteCell(x: number, y: number): boolean {
+  return leftShelfRouteFlowAt(x, y) !== null;
+}
+
+export function isStartLineColumn(x: number): boolean {
+  return x === START_LINE_X;
+}
 
 /** Assign 1-based location numbers along the warehouse snake path. */
 export function buildShelfLocationMap(
@@ -227,6 +271,10 @@ function isWrongWayAt(x: number, y: number, moveDir: string): boolean {
 }
 
 function flowAt(x: number, y: number): string | null {
+  const perimeter = perimeterPassageFlowAt(x, y);
+  if (perimeter) return perimeter;
+  const leftRoute = leftShelfRouteFlowAt(x, y);
+  if (leftRoute) return leftRoute;
   if (isStartCorridorX(x)) return null;
   if (y === MAIN_AISLE_Y_TOP) return 'right';
   if (y === MAIN_AISLE_Y_BOTTOM) return 'left';
@@ -296,57 +344,47 @@ export function getStartCorridorCells(grid: Tile[][]): { x: number; y: number }[
   return cells;
 }
 
-/** Player spawn — front-left of start hall on upper main aisle (rush-right layout). */
-export function findPlayerSpawn(grid: Tile[][]): { x: number; y: number } {
-  const preferred = [
-    { x: START_ZONE_X_MIN, y: MAIN_AISLE_Y_TOP },
-    { x: START_ZONE_X_MIN + 1, y: MAIN_AISLE_Y_TOP },
-    { x: START_ZONE_X_MIN, y: MAIN_AISLE_Y_BOTTOM },
-  ];
-  for (const p of preferred) {
-    if (isWalkable(grid, p.x, p.y)) return p;
+/** Vertical spawn column in the start hall — player + CPUs evenly stacked top→bottom. */
+export function assignStartSpawns(
+  grid: Tile[][],
+  cpuCount: number,
+): { player: { x: number; y: number }; cpus: { x: number; y: number }[] } {
+  const x = START_LINE_X;
+  const ys: number[] = [];
+  for (let y = 1; y < GRID_H - 1; y++) {
+    if (isWalkable(grid, x, y)) ys.push(y);
   }
-  const cells = getStartCorridorCells(grid);
-  return cells[0] ?? { x: START_ZONE_X_MIN, y: MAIN_AISLE_Y_TOP };
+
+  const total = cpuCount + 1;
+  const used = new Set<string>();
+  const positions: { x: number; y: number }[] = [];
+
+  for (let i = 0; i < total; i++) {
+    const t = total <= 1 ? 0.5 : i / (total - 1);
+    let y = ys[Math.round(t * (ys.length - 1))] ?? MAIN_AISLE_Y_TOP;
+    while (used.has(`${x},${y}`) && y < GRID_H - 2) y += 1;
+    while (used.has(`${x},${y}`) && y > 1) y -= 1;
+    positions.push({ x, y });
+    used.add(`${x},${y}`);
+  }
+
+  return { player: positions[0], cpus: positions.slice(1) };
 }
 
-/** CPU spawns — fill start hall beside player, ready to surge right together. */
+/** @deprecated Use assignStartSpawns */
+export function findPlayerSpawn(grid: Tile[][]): { x: number; y: number } {
+  return assignStartSpawns(grid, 1).player;
+}
+
+/** @deprecated Use assignStartSpawns */
 export function findCpuSpawnPoints(
   grid: Tile[][],
   playerSpawn: { x: number; y: number },
   count: number,
 ): { x: number; y: number }[] {
-  const used = new Set<string>([`${playerSpawn.x},${playerSpawn.y}`]);
-
-  // Main-aisle rows first, then adjacent rows — left-to-right within the hall.
-  const yPriority = [
-    MAIN_AISLE_Y_TOP,
-    MAIN_AISLE_Y_BOTTOM,
-    MAIN_AISLE_Y_TOP - 1,
-    MAIN_AISLE_Y_BOTTOM + 1,
-    MAIN_AISLE_Y_TOP - 2,
-    MAIN_AISLE_Y_BOTTOM + 2,
-  ].filter((y) => y > 0 && y < GRID_H - 1);
-
-  const slots: { x: number; y: number }[] = [];
-  for (const y of yPriority) {
-    for (let x = START_ZONE_X_MIN; x <= START_ZONE_X_MAX; x++) {
-      slots.push({ x, y });
-    }
+  const all = assignStartSpawns(grid, count);
+  if (all.player.x !== playerSpawn.x || all.player.y !== playerSpawn.y) {
+    return all.cpus;
   }
-  for (const c of getStartCorridorCells(grid)) {
-    if (!slots.some((s) => s.x === c.x && s.y === c.y)) slots.push(c);
-  }
-
-  const spawns: { x: number; y: number }[] = [];
-  for (const cell of slots) {
-    if (spawns.length >= count) break;
-    const key = `${cell.x},${cell.y}`;
-    if (used.has(key)) continue;
-    if (!isWalkable(grid, cell.x, cell.y)) continue;
-    spawns.push(cell);
-    used.add(key);
-  }
-
-  return spawns;
+  return all.cpus;
 }

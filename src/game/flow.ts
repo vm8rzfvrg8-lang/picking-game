@@ -2,6 +2,9 @@ import {
   COLLISION_STUN_LOSER_MS,
   COLLISION_STUN_WINNER_MS,
   Direction,
+  GRID_H,
+  GRID_W,
+  LEFT_DECOR_COLS,
   MAX_LOOP_ITERATIONS_PER_FRAME,
   Tile,
 } from './constants';
@@ -10,11 +13,12 @@ import {
   MAIN_AISLE_Y_TOP,
   isStartCorridorX,
   isSubAisleX,
-  START_ZONE_X_MAX,
+  leftShelfRouteFlowAt,
+  perimeterPassageFlowAt,
+  START_ZONE_X_MIN,
   subAisleFlowDirection,
   isWalkable,
 } from './levelgen';
-import { GRID_H, GRID_W } from './constants';
 
 export type LaneKind = 'main' | 'sub' | 'start' | 'other';
 
@@ -26,6 +30,10 @@ export function laneAt(x: number, y: number): LaneKind {
 }
 
 export function flowAt(x: number, y: number): Direction | null {
+  const perimeter = perimeterPassageFlowAt(x, y);
+  if (perimeter) return perimeter;
+  const leftRoute = leftShelfRouteFlowAt(x, y);
+  if (leftRoute) return leftRoute;
   if (isStartCorridorX(x)) return null;
   if (y === MAIN_AISLE_Y_TOP) return 'right';
   if (y === MAIN_AISLE_Y_BOTTOM) return 'left';
@@ -143,14 +151,22 @@ export function drawFlowTrailArrow(
   const oy = y * tileSize;
   const cx = ox + tileSize / 2;
   const cy = oy + tileSize / 2;
+
+  if (kind === 'flow') {
+    ctx.fillStyle = `rgba(0, 230, 118, ${0.12 * alpha})`;
+  } else {
+    ctx.fillStyle = `rgba(255, 0, 51, ${0.14 * alpha})`;
+  }
+  ctx.fillRect(ox, oy, tileSize, tileSize);
+
   const tape =
     kind === 'flow'
-      ? `rgba(70, 120, 85, ${0.45 * alpha})`
-      : `rgba(120, 45, 45, ${0.45 * alpha})`;
+      ? `rgba(0, 200, 100, ${0.55 * alpha})`
+      : `rgba(213, 0, 0, ${0.58 * alpha})`;
   const chevron =
     kind === 'flow'
-      ? `rgba(90, 210, 130, ${0.85 * alpha})`
-      : `rgba(235, 80, 75, ${0.85 * alpha})`;
+      ? `rgba(0, 255, 127, ${0.82 * alpha})`
+      : `rgba(255, 0, 51, ${0.82 * alpha})`;
 
   drawLaneTape(ctx, ox, oy, tileSize, flow, tape);
   drawLaneChevron(ctx, cx, cy, flow, chevron);
@@ -404,9 +420,16 @@ export function drawMainAisleCenterLine(
   cullMaxX?: number,
 ) {
   const y = ((MAIN_AISLE_Y_TOP + MAIN_AISLE_Y_BOTTOM + 1) / 2) * tileSize;
-  const aisleStartX = (START_ZONE_X_MAX + 1) * tileSize;
-  const x0 = Math.max(aisleStartX, cullMinX ?? aisleStartX);
-  const x1 = Math.min((GRID_W - 1) * tileSize, cullMaxX ?? (GRID_W - 1) * tileSize);
+  const decorPx = LEFT_DECOR_COLS * tileSize;
+  /** Grid-space start: right of 10-tile decor (= start line, grid x=1). */
+  const lineStartX = START_ZONE_X_MIN * tileSize;
+  const lineEndX = (GRID_W - 1) * tileSize;
+
+  const cullMinGrid = cullMinX != null ? cullMinX - decorPx : undefined;
+  const cullMaxGrid = cullMaxX != null ? cullMaxX - decorPx : undefined;
+
+  const x0 = Math.max(lineStartX, cullMinGrid ?? lineStartX);
+  const x1 = Math.min(lineEndX, cullMaxGrid ?? lineEndX);
   if (x0 >= x1) return;
 
   ctx.fillStyle = 'rgba(22, 24, 32, 0.75)';

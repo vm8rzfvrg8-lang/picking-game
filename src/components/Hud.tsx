@@ -1,2 +1,1 @@
-export { LeaderboardSidebar } from './LeaderboardSidebar';
-export { GameplayTopBar } from './GameplayTopBar';
+export { RaceProgressHud } from './RaceProgressHud';

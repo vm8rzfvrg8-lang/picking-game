@@ -1,4 +1,6 @@
 import { GRID_H, GRID_W, TILE } from './constants';
+import { gridDecorOffset, gridWorldX, gridWorldY } from './camera';
+import { getComboCanvasColor } from './combo';
 import { SkillType } from './skills';
 import { classifyMoveTrail, drawFlowTrailArrow } from './flow';
 import type { Direction } from './constants';
@@ -37,6 +39,8 @@ export interface PopText {
   timer: number;
   label: string;
   color: string;
+  /** When set, color follows combo palette (incl. rainbow for ≥5). */
+  comboLevel?: number;
 }
 
 export interface TrailMark {
@@ -137,6 +141,54 @@ export function triggerCollisionShake(vfx: VfxState, strong = false) {
   vfx.shakeDuration = strong ? 200 : 150;
   vfx.shakeMs = vfx.shakeDuration;
   vfx.shakeMag = strong ? 2.2 : 1.4;
+}
+
+export function triggerComboPop(
+  vfx: VfxState,
+  gx: number,
+  gy: number,
+  combo: number,
+) {
+  const cx = gx * TILE + TILE / 2;
+  const cy = gy * TILE + TILE / 2;
+  const color = getComboCanvasColor(combo, performance.now() / 1000);
+
+  vfx.popTexts.push({
+    x: cx,
+    y: cy - 22,
+    timer: 900,
+    label: `${combo} COMBO!`,
+    color,
+    comboLevel: combo,
+  });
+  vfx.popTexts.push({
+    x: cx,
+    y: cy - 36,
+    timer: 750,
+    label: combo >= 5 ? 'ZONE!' : 'SPEED UP!',
+    color,
+    comboLevel: combo,
+  });
+
+  const particleColors =
+    combo >= 5
+      ? ['#FF3333', '#FFB830', '#00FF7F', '#00BFFF', '#A855F7']
+      : [color, color];
+
+  for (let i = 0; i < 6; i++) {
+    const ang = (i / 6) * Math.PI * 2;
+    vfx.particles.push({
+      x: cx,
+      y: cy - 18,
+      vx: Math.cos(ang) * 50,
+      vy: Math.sin(ang) * 50 - 40,
+      life: 320,
+      maxLife: 320,
+      color: particleColors[i % particleColors.length],
+      size: 2,
+      gravity: 80,
+    });
+  }
 }
 
 export function triggerPickComplete(
@@ -293,11 +345,12 @@ export function getShakeOffset(vfx: VfxState): { x: number; y: number } {
 }
 
 export function drawVfx(ctx: CanvasRenderingContext2D, vfx: VfxState, cull?: import('./camera').CullBounds) {
+  const decor = gridDecorOffset();
   for (const f of vfx.pickFlashes) {
     if (cull) {
-      const ox = f.gx * TILE;
-      const oy = f.gy * TILE;
-      if (ox + TILE <= cull.minX || ox >= cull.maxX || oy + TILE <= cull.minY || oy >= cull.maxY) continue;
+      const wx = gridWorldX(f.gx);
+      const wy = gridWorldY(f.gy);
+      if (wx + TILE <= cull.minX || wx >= cull.maxX || wy + TILE <= cull.minY || wy >= cull.maxY) continue;
     }
     const t = f.timer / 520;
     const ox = f.gx * TILE;
@@ -310,7 +363,11 @@ export function drawVfx(ctx: CanvasRenderingContext2D, vfx: VfxState, cull?: imp
   }
 
   for (const p of vfx.particles) {
-    if (cull && (p.x >= cull.maxX || p.x + p.size <= cull.minX || p.y >= cull.maxY || p.y + p.size <= cull.minY)) continue;
+    if (cull) {
+      const wx = p.x + decor.x;
+      const wy = p.y + decor.y;
+      if (wx >= cull.maxX || wx + p.size <= cull.minX || wy >= cull.maxY || wy + p.size <= cull.minY) continue;
+    }
     const a = Math.min(1, p.life / (p.maxLife * 0.35));
     ctx.globalAlpha = a;
     ctx.fillStyle = p.color;
@@ -320,13 +377,17 @@ export function drawVfx(ctx: CanvasRenderingContext2D, vfx: VfxState, cull?: imp
 
   for (const t of vfx.popTexts) {
     const a = Math.min(1, t.timer / 200);
+    const fillColor =
+      t.comboLevel != null
+        ? getComboCanvasColor(t.comboLevel, performance.now() / 1000)
+        : t.color;
     ctx.save();
     ctx.globalAlpha = a;
     ctx.font = 'bold 9px "Press Start 2P", monospace';
     ctx.textAlign = 'center';
     ctx.fillStyle = 'rgba(0,0,0,0.6)';
     ctx.fillText(t.label, t.x + 1, t.y + 1);
-    ctx.fillStyle = t.color;
+    ctx.fillStyle = fillColor;
     ctx.fillText(t.label, t.x, t.y);
     ctx.restore();
   }
@@ -363,7 +424,7 @@ export function drawTrailMarks(ctx: CanvasRenderingContext2D, vfx: VfxState, cul
 }
 
 function isTrailVisible(gx: number, gy: number, cull: import('./camera').CullBounds): boolean {
-  const ox = gx * TILE;
-  const oy = gy * TILE;
+  const ox = gridWorldX(gx);
+  const oy = gridWorldY(gy);
   return ox + TILE > cull.minX && ox < cull.maxX && oy + TILE > cull.minY && oy < cull.maxY;
 }
