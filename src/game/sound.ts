@@ -79,6 +79,18 @@ export const sfx = {
     window.setTimeout(() => audioManager.playRetroBlip(1100, 0.08, 'sawtooth', 0.1, 350), 180);
     window.setTimeout(() => audioManager.playRetroBlip(880, 0.06, 'square', 0.08, 200), 240);
   },
+  /** Generic knockback launch — heavy kb + big scream (airborne / traps). */
+  knockbackLaunch(seed = 0) {
+    audioManager.playKnockback('heavy', seed);
+  },
+  /** Light knockback — small scream + kb_light (character bumps). */
+  knockbackLight(seed = 0) {
+    audioManager.playKnockback('light', seed);
+  },
+  /** Banana peel slip gimmick. */
+  bananaPeel(seed = 0) {
+    audioManager.playBananaPeel(seed);
+  },
 };
 
 export function playSkillSfx(skill: SkillType) {

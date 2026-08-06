@@ -50,6 +50,37 @@ import {
   isWalkable,
   makeRng,
 } from './levelgen';
+import {
+  createKnockbackState,
+  facingFromKnockback,
+  tickKnockbackEntity,
+  type KnockbackDirection,
+  type KnockbackTarget,
+  type KnockbackVisualOpts,
+} from './knockback';
+import {
+  BANANA_LIFT_PX,
+  BANANA_PEAK_SCALE,
+  BANANA_SLIP_DURATION_MS,
+  BANANA_SLIP_FORCE,
+  beginBananaPeelFade,
+  findActiveBananaPeelIndex,
+  placeBananaPeels,
+  slipDirectionFromFacing,
+  tickTrapAnimations,
+} from './traps';
+
+export type {
+  KnockbackDirection,
+  KnockbackTarget,
+  KnockbackState,
+} from './knockback';
+export {
+  getKnockbackVisualOffset,
+  isKnockbackMoving,
+  normalizeKnockbackDirection,
+  getKnockbackDrawFx,
+} from './knockback';
 
 function createRivalEntity(
   id: number,
@@ -85,6 +116,7 @@ function createRivalEntity(
     pushStuckMs: 0,
     pushBlockerIndex: null,
     narrowCorridorSince: -1,
+    knockback: null,
   };
 }
 
@@ -156,6 +188,8 @@ export function newGame(
     createRivalEntity(id, spawn, shelfCells, shelfLocations, rng, picks),
   );
 
+  const traps = placeBananaPeels(grid, rng, undefined, [playerSpawn, ...cpuSpawns]);
+
   return {
     grid,
     shelfLocations,
@@ -166,6 +200,7 @@ export function newGame(
       spawn: playerSpawn,
       stun: 0,
       lastMoveDir: null,
+      knockback: null,
     },
     rivals,
     cpuCount: count,
@@ -200,6 +235,7 @@ export function newGame(
     lastPickSuccessElapsed: -1,
     maxPickCombo: 0,
     finishOrder: [],
+    traps,
   };
 }
 
@@ -764,7 +800,36 @@ export type GameEvent =
   | { type: 'skillUsed'; skill: SkillType }
   | { type: 'yield'; who: 'player' | 'rival' }
   | { type: 'win' }
-  | { type: 'lose' };
+  | { type: 'lose' }
+  | {
+      type: 'knockback';
+      who: 'player' | 'rival';
+      rivalId?: number;
+      x: number;
+      y: number;
+      dirX: number;
+      dirY: number;
+      force: number;
+      durationMs: number;
+      seed: number;
+      isAirborne: boolean;
+    }
+  | {
+      type: 'knockbackWallHit';
+      who: 'player' | 'rival';
+      rivalId?: number;
+      x: number;
+      y: number;
+    }
+  | {
+      type: 'trapTriggered';
+      kind: 'bananaPeel';
+      x: number;
+      y: number;
+      who: 'player' | 'rival';
+      rivalId?: number;
+      seed: number;
+    };
 
 type CollisionEventDetail = Omit<
   Extract<GameEvent, { type: 'collision' }>,
@@ -1704,8 +1769,11 @@ export function step(state: GameState, input: Input, dtMs: number): StepResult {
   if (!playable) return { state, events: [] };
   const events: GameEvent[] = [];
   let s: GameState = { ...state, version: state.version + 1 };
+  const prevPlayerCell = { x: s.player.x, y: s.player.y };
+  const prevRivalCells = s.rivals.map((r) => ({ id: r.id, x: r.x, y: r.y }));
   s = tickSkills(s, dtMs);
   s.elapsed += dtMs;
+  s = { ...s, traps: tickTrapAnimations(s.traps, dtMs) };
 
   const comboTick = tickComboExpiry(s.pickCombo, s.lastPickSuccessElapsed, s.elapsed);
   if (comboTick.expired) {
@@ -1731,8 +1799,27 @@ export function step(state: GameState, input: Input, dtMs: number): StepResult {
   let rivalAttemptDir: Direction | null = null;
   let collisionRivalIndex: number | null = null;
 
-  if (s.player.stun > 0) {
-    s.player = { ...s.player, stun: Math.max(0, s.player.stun - dtMs) };
+  if (s.player.knockback || s.player.stun > 0) {
+    if (s.player.knockback) {
+      const tick = tickKnockbackEntity(
+        s.player,
+        s.grid,
+        dtMs,
+        (nx, ny) => isCellOccupied(s, nx, ny),
+      );
+      s.player = {
+        ...s.player,
+        x: tick.x,
+        y: tick.y,
+        knockback: tick.knockback,
+        stun: tick.stun,
+      };
+      if (tick.hitWall) {
+        events.push({ type: 'knockbackWallHit', who: 'player', x: tick.x, y: tick.y });
+      }
+    } else {
+      s.player = { ...s.player, stun: Math.max(0, s.player.stun - dtMs) };
+    }
   } else if (input.dir && !s.isPicking) {
     const { dx, dy } = DELTA[input.dir];
     const nx = s.player.x + dx;
@@ -1874,6 +1961,8 @@ export function step(state: GameState, input: Input, dtMs: number): StepResult {
 
   s = resolveRivalOverlaps(s);
 
+  s = resolveTrapEntries(s, prevPlayerCell, prevRivalCells, events);
+
   if (s.phase === 'playing' && s.currentTarget >= s.pickCount) {
     if (isGoalCell(s.grid, s.player.x, s.player.y)) {
       s = registerFinish(s, { kind: 'player' });
@@ -1906,6 +1995,26 @@ function stepOneRival(
   const cpu = getDifficultyConfig(s.difficulty);
 
   if (s.tutorialRivalBlock) {
+    return { rival: r, collision, attemptDir, rivalRivalCollision: null };
+  }
+
+  if (r.knockback) {
+    const tick = tickKnockbackEntity(
+      r,
+      s.grid,
+      dtMs,
+      (nx, ny) => isCellOccupied(s, nx, ny, rivalIndex),
+    );
+    r = { ...r, x: tick.x, y: tick.y, knockback: tick.knockback, stun: tick.stun };
+    if (tick.hitWall) {
+      events.push({
+        type: 'knockbackWallHit',
+        who: 'rival',
+        rivalId: r.id,
+        x: tick.x,
+        y: tick.y,
+      });
+    }
     return { rival: r, collision, attemptDir, rivalRivalCollision: null };
   }
 
@@ -2041,4 +2150,175 @@ function stepOneRival(
     attemptDir: moveResult.attemptDir,
     rivalRivalCollision: moveResult.rivalRivalCollision,
   };
+}
+
+const DEFAULT_KNOCKBACK_FORCE = 1.5;
+const DEFAULT_KNOCKBACK_DURATION_MS = 400;
+
+function isTrapTargetSlippable(state: GameState, target: KnockbackTarget): boolean {
+  if (target.kind === 'player') {
+    const p = state.player;
+    return !p.knockback && p.stun <= 0;
+  }
+  const rival = state.rivals.find((r) => r.id === target.id);
+  return rival != null && !rival.knockback && rival.stun <= 0;
+}
+
+function tryApplyBananaPeel(
+  state: GameState,
+  x: number,
+  y: number,
+  target: KnockbackTarget,
+  moveDir: Direction | null,
+  events: GameEvent[],
+): GameState {
+  const peelIndex = findActiveBananaPeelIndex(state, x, y);
+  if (peelIndex < 0 || !isTrapTargetSlippable(state, target)) return state;
+
+  const facing =
+    target.kind === 'player'
+      ? state.player.facing
+      : state.rivals.find((r) => r.id === target.id)?.facing ?? 'down';
+  const lastMoveDir =
+    target.kind === 'player'
+      ? state.player.lastMoveDir
+      : state.rivals.find((r) => r.id === target.id)?.lastMoveDir ?? null;
+
+  const slipDir = slipDirectionFromFacing(facing, moveDir ?? lastMoveDir);
+  const trapSeed = state.traps[peelIndex].id * 97 + x * 13 + y * 7;
+
+  const kbResult = applyKnockback(
+    state,
+    target,
+    slipDir,
+    BANANA_SLIP_FORCE,
+    BANANA_SLIP_DURATION_MS,
+    true,
+    { peakScale: BANANA_PEAK_SCALE, liftPx: BANANA_LIFT_PX },
+  );
+
+  const traps = [...kbResult.state.traps];
+  traps[peelIndex] = beginBananaPeelFade(traps[peelIndex], slipDir);
+
+  events.push({
+    type: 'trapTriggered',
+    kind: 'bananaPeel',
+    x,
+    y,
+    who: target.kind === 'player' ? 'player' : 'rival',
+    rivalId: target.kind === 'rival' ? target.id : undefined,
+    seed: trapSeed,
+  });
+  events.push(...kbResult.events);
+
+  return { ...kbResult.state, traps };
+}
+
+function resolveTrapEntries(
+  state: GameState,
+  prevPlayer: { x: number; y: number },
+  prevRivals: { id: number; x: number; y: number }[],
+  events: GameEvent[],
+): GameState {
+  if (state.phase !== 'playing') return state;
+
+  let s = state;
+  if (s.player.x !== prevPlayer.x || s.player.y !== prevPlayer.y) {
+    s = tryApplyBananaPeel(s, s.player.x, s.player.y, { kind: 'player' }, s.player.lastMoveDir, events);
+  }
+
+  for (const rival of s.rivals) {
+    const prev = prevRivals.find((p) => p.id === rival.id);
+    if (!prev) continue;
+    if (rival.x !== prev.x || rival.y !== prev.y) {
+      s = tryApplyBananaPeel(
+        s,
+        rival.x,
+        rival.y,
+        { kind: 'rival', id: rival.id },
+        rival.lastMoveDir,
+        events,
+      );
+    }
+  }
+
+  return s;
+}
+
+/**
+ * Apply generic knockback to player or CPU — for traps, gimmicks, and items.
+ * Sets motion vector, stun, and emits knockback events (SFX/VFX handled in App).
+ */
+export function applyKnockback(
+  state: GameState,
+  target: KnockbackTarget,
+  direction: KnockbackDirection,
+  force = DEFAULT_KNOCKBACK_FORCE,
+  durationMs = DEFAULT_KNOCKBACK_DURATION_MS,
+  isAirborne = false,
+  visualOpts?: KnockbackVisualOpts,
+): StepResult {
+  const events: GameEvent[] = [];
+  let s: GameState = { ...state, version: state.version + 1 };
+  const seed = Math.floor(Math.random() * 10000);
+  const kb = createKnockbackState(direction, force, durationMs, seed, isAirborne, visualOpts);
+  const facing = facingFromKnockback(direction);
+
+  if (target.kind === 'player') {
+    if (s.isPicking) {
+      s = { ...s, isPicking: false, pickProgress: 0 };
+      events.push({ type: 'pickCancel', who: 'player' });
+    }
+    s.player = {
+      ...s.player,
+      knockback: kb,
+      stun: durationMs,
+      facing,
+    };
+    events.push({
+      type: 'knockback',
+      who: 'player',
+      x: s.player.x,
+      y: s.player.y,
+      dirX: kb.dirX,
+      dirY: kb.dirY,
+      force,
+      durationMs,
+      seed,
+      isAirborne,
+    });
+    return { state: s, events };
+  }
+
+  const rivalIndex = s.rivals.findIndex((r) => r.id === target.id);
+  if (rivalIndex < 0) return { state, events: [] };
+
+  let rival = s.rivals[rivalIndex];
+  if (rival.isPicking) {
+    rival = { ...rival, isPicking: false, pickProgress: 0 };
+    events.push({ type: 'pickCancel', who: 'rival' });
+  }
+  rival = {
+    ...rival,
+    knockback: kb,
+    stun: durationMs,
+    facing,
+  };
+  const rivals = [...s.rivals];
+  rivals[rivalIndex] = rival;
+  s = { ...s, rivals };
+  events.push({
+    type: 'knockback',
+    who: 'rival',
+    rivalId: rival.id,
+    x: rival.x,
+    y: rival.y,
+    dirX: kb.dirX,
+    dirY: kb.dirY,
+    force,
+    durationMs,
+    seed,
+    isAirborne,
+  });
+  return { state: s, events };
 }

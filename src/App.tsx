@@ -3,7 +3,7 @@ import { GameState, DEFAULT_CPU_COUNT, DEFAULT_PICK_COUNT, PLAYER_COOLDOWN_MS, T
 import { getComboCanvasColor, getComboMoveCooldown } from './game/combo';
 import { computeCameraTransform, cullBoundsFromCamera, gridDecorOffset, type CameraState } from './game/camera';
 import { Difficulty } from './game/difficulty';
-import { Direction, Input, isPickInput, newGame, startPlaying, enterTutorial, returnToStart, step } from './game/engine';
+import { Direction, Input, isPickInput, newGame, startPlaying, enterTutorial, returnToStart, step, getKnockbackVisualOffset, isKnockbackMoving, getKnockbackDrawFx } from './game/engine';
 import {
   render,
   drawCharacterAt,
@@ -32,6 +32,7 @@ import {
   isGoLabel,
 } from './game/countdown';
 import { loadBreakRoomBackground } from './game/breakRoomBackground';
+import { loadBananaPeelImage } from './game/bananaPeelSprite';
 import { loadTopHeaderBackground } from './game/topHeaderBackground';
 import { SkillButton } from './components/SkillButton';
 import { MobileControls } from './components/MobileControls';
@@ -59,6 +60,8 @@ import {
   getShakeOffset,
   resetVfx,
   triggerCollisionShake,
+  triggerKnockbackFx,
+  triggerKnockbackWallFx,
   triggerComboPop,
   triggerGoalUnlock,
   triggerPickComplete,
@@ -322,9 +325,14 @@ export default function App() {
 
     // Smooth visual lerp toward logical positions
     const pv = playerVisualRef.current;
-    const playerLerp = isSuperSpeedActive(g.skills) ? 24 : 16;
-    pv.x = lerp(pv.x, g.player.x, Math.min(1, playerLerp * dt));
-    pv.y = lerp(pv.y, g.player.y, Math.min(1, playerLerp * dt));
+    const playerTarget = getKnockbackVisualOffset(g.player);
+    const playerLerp = isKnockbackMoving(g.player.knockback)
+      ? 28
+      : isSuperSpeedActive(g.skills)
+        ? 24
+        : 16;
+    pv.x = lerp(pv.x, playerTarget.x, Math.min(1, playerLerp * dt));
+    pv.y = lerp(pv.y, playerTarget.y, Math.min(1, playerLerp * dt));
     const { width: viewW, height: viewH } = viewportRef.current;
     const targetCam = computeCameraTransform(pv.x, viewW, viewH);
     const cam = cameraRef.current;
@@ -334,9 +342,11 @@ export default function App() {
     cam.viewWorldW = targetCam.viewWorldW;
     cam.viewWorldH = targetCam.viewWorldH;
     for (const rival of g.rivals) {
+      const rivalTarget = getKnockbackVisualOffset(rival);
       const rv = rivalVisualRefs.current[rival.id] ?? { x: rival.x, y: rival.y };
-      rv.x = lerp(rv.x, rival.x, Math.min(1, 12 * dt));
-      rv.y = lerp(rv.y, rival.y, Math.min(1, 12 * dt));
+      const rivalLerp = isKnockbackMoving(rival.knockback) ? 26 : 12;
+      rv.x = lerp(rv.x, rivalTarget.x, Math.min(1, rivalLerp * dt));
+      rv.y = lerp(rv.y, rivalTarget.y, Math.min(1, rivalLerp * dt));
       rivalVisualRefs.current[rival.id] = rv;
     }
 
@@ -365,7 +375,8 @@ export default function App() {
         moveCdRef.current >= moveCooldown &&
         dir &&
         !g.isPicking &&
-        g.player.stun === 0
+        g.player.stun === 0 &&
+        !isKnockbackMoving(g.player.knockback)
       ) {
         input.dir = dir;
         moveCdRef.current = 0;
@@ -404,6 +415,17 @@ export default function App() {
           if (ev.involvesPlayer) {
             triggerCollisionShake(vfx, ev.playerWrongWay || ev.rivalWrongWay);
           }
+        } else if (ev.type === 'knockback') {
+          if (ev.isAirborne) {
+            sfx.knockbackLaunch(ev.seed);
+            triggerKnockbackFx(vfx, ev.x, ev.y, ev.dirX, ev.dirY, ev.seed);
+          } else {
+            sfx.knockbackLight(ev.seed);
+          }
+        } else if (ev.type === 'trapTriggered' && ev.kind === 'bananaPeel') {
+          sfx.bananaPeel(ev.seed);
+        } else if (ev.type === 'knockbackWallHit') {
+          triggerKnockbackWallFx(vfx, ev.x, ev.y);
         } else if (ev.type === 'skillUsed') {
           playSkillSfx(ev.skill);
           triggerSkillActivate(
@@ -428,7 +450,7 @@ export default function App() {
       if (res.state !== g) {
         gameRef.current = res.state;
         setGame(res.state);
-        if (res.events.some((e) => e.type === 'collision' || e.type === 'yield')) {
+        if (res.events.some((e) => e.type === 'collision' || e.type === 'yield' || e.type === 'knockback' || e.type === 'trapTriggered')) {
           playerVisualRef.current = {
             x: res.state.player.x,
             y: res.state.player.y,
@@ -591,6 +613,7 @@ export default function App() {
 
   useEffect(() => {
     loadBreakRoomBackground();
+    loadBananaPeelImage();
     loadTopHeaderBackground();
     return () => clearCountdownTimers();
   }, [clearCountdownTimers]);
@@ -697,13 +720,13 @@ function drawSmoothEntities(
   blink: number,
   vfx: VfxState,
 ) {
-  eraseFloorCell(ctx, state, state.player.x, state.player.y);
-  eraseFloorCell(ctx, state, Math.round(playerVisual.x), Math.round(playerVisual.y));
+  eraseFloorCell(ctx, state, state.player.x, state.player.y, blink);
+  eraseFloorCell(ctx, state, Math.round(playerVisual.x), Math.round(playerVisual.y), blink);
 
   for (const rival of state.rivals) {
     const rivalVisual = rivalVisuals[rival.id] ?? { x: rival.x, y: rival.y };
-    eraseFloorCell(ctx, state, rival.x, rival.y);
-    eraseFloorCell(ctx, state, Math.round(rivalVisual.x), Math.round(rivalVisual.y));
+    eraseFloorCell(ctx, state, rival.x, rival.y, blink);
+    eraseFloorCell(ctx, state, Math.round(rivalVisual.x), Math.round(rivalVisual.y), blink);
 
     const rMoving =
       Math.abs(rivalVisual.x - rival.x) > 0.04 || Math.abs(rivalVisual.y - rival.y) > 0.04;
@@ -724,6 +747,7 @@ function drawSmoothEntities(
         squash: rMoving ? 0.92 : 1,
         jamStun: rival.jamStun && rival.stun > 0,
         rivalIndex: rival.id,
+        knockbackFx: getKnockbackDrawFx(rival.knockback),
       },
     );
     if (rival.isPicking) {
@@ -742,6 +766,7 @@ function drawSmoothEntities(
     squash: pMoving ? 0.9 : 1,
     speedBoost: isSuperSpeedActive(state.skills) || state.pickCombo > 0,
     pushThrough: isPushThroughActive(state.skills),
+    knockbackFx: getKnockbackDrawFx(state.player.knockback),
   });
   if (state.isPicking) {
     drawPickGaugeAt(ctx, playerVisual.x, py, state.pickProgress, 'player');

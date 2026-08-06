@@ -8,6 +8,27 @@ export type Tile =
 export type Facing = 'up' | 'down' | 'left' | 'right';
 export type Direction = Facing;
 
+import type { KnockbackState } from './knockback';
+
+export type TrapKind = 'bananaPeel';
+
+export interface TrapEntity {
+  id: number;
+  kind: TrapKind;
+  x: number;
+  y: number;
+  /** False once stepped on (no re-trigger); may still fade out visually. */
+  active: boolean;
+  /** Ms remaining for post-step fade/slide; 0 = idle or fully gone. */
+  fadeMs: number;
+  /** Normalized slide direction when fade started. */
+  fadeDirX: number;
+  fadeDirY: number;
+  /** Visual slide offset in pixels during fade. */
+  fadeSlideX: number;
+  fadeSlideY: number;
+}
+
 export interface PlayerEntity {
   x: number;
   y: number;
@@ -15,6 +36,8 @@ export interface PlayerEntity {
   spawn: { x: number; y: number };
   stun: number; // >0 = frozen (ms remaining)
   lastMoveDir: Direction | null;
+  /** Generic knockback motion (traps, gimmicks, items). */
+  knockback: KnockbackState | null;
 }
 
 export interface RivalEntity {
@@ -49,6 +72,8 @@ export interface RivalEntity {
   pushBlockerIndex: number | null;
   /** Elapsed time when entering current 1-wide corridor (-1 if none). */
   narrowCorridorSince: number;
+  /** Generic knockback motion (traps, gimmicks, items). */
+  knockback: KnockbackState | null;
 }
 
 // A pick target: a bookshelf cell with location number and pick order
@@ -190,6 +215,8 @@ export interface GameState {
   maxPickCombo: number;
   /** Racers that crossed the goal line, in finish order. */
   finishOrder: Array<{ kind: 'player' } | { kind: 'rival'; id: number }>;
+  /** Map-placed traps (banana peels, etc.). */
+  traps: TrapEntity[];
 }
 
 export function clampCpuCount(count: number): number {

@@ -45,6 +45,9 @@ export const DEFAULT_AUDIO_VOLUMES: AudioVolumes = {
 /** Extra gain applied to combo SFX so it cuts through footsteps / knockback. */
 export const COMBO_SFX_BOOST = 1.55;
 
+/** Extra gain for banana slip gimmick SE so it cuts through BGM / knockback. */
+export const BANANA_SLIP_SFX_BOOST = 1.48;
+
 const VOLUME_STORAGE_KEY = 'picking-game-audio-volumes';
 
 /** Per-category cooldown (ms) to prevent audio spam. */
@@ -319,9 +322,6 @@ class AudioManager {
     return 0.9 + spread + Math.random() * 0.06;
   }
 
-  /**
-   * Unified knockback SE — player & CPU share pools; pitch/asset vary per entity.
-   */
   playKnockback(severity: 'light' | 'heavy', entitySeed = 0): void {
     if (!this.beginKnockbackBurst(severity)) return;
 
@@ -393,6 +393,41 @@ class AudioManager {
 
   playScreamBig(): void {
     this.playKnockback('heavy', this.screamBigVariant++);
+  }
+
+  /** Banana peel slip gimmick SE — loud comic slide (banana_slip.wav). */
+  playBananaPeel(seed = 0): void {
+    if (this.muted) return;
+    const pitch = 0.96 + (seed % 4) * 0.03;
+    if (
+      this.playRandomFromPool(
+        SOUND_MANIFEST.gimmick.bananaSlip,
+        'retro',
+        BANANA_SLIP_SFX_BOOST,
+        pitch,
+      )
+    ) {
+      return;
+    }
+    this.playBananaPeelSynth(seed);
+  }
+
+  private playBananaPeelSynth(seed: number): void {
+    const vol = this.effectiveVolume('retro', BANANA_SLIP_SFX_BOOST);
+    const v = seed % 3;
+    synthBlip(this.ctx, 680 + v * 40, 0.05, 'square', vol * 0.55, 1200);
+    window.setTimeout(
+      () => synthBlip(this.ctx, 420, 0.07, 'triangle', vol * 0.7, 180),
+      28,
+    );
+    window.setTimeout(
+      () => synthBlip(this.ctx, 220, 0.14, 'sawtooth', vol * 0.65, 90),
+      55,
+    );
+    window.setTimeout(
+      () => synthBlip(this.ctx, 880, 0.06, 'square', vol * 0.45, 520),
+      80,
+    );
   }
 
   playCombo(combo: number, tier: number): void {

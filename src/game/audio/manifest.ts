@@ -49,6 +49,9 @@ export const SOUND_MANIFEST = {
       '/sounds/knockback/kb_light_2.wav',
     ],
   },
+  gimmick: {
+    bananaSlip: ['/sounds/gimmicks/banana_slip.wav'],
+  },
   combo: {
     /** Optional combo chime samples (playbackRate scales with combo if provided). */
     chime: [] as readonly string[],

@@ -14,6 +14,7 @@ import {
 import { drawFlowArrow, drawMainAisleCenterLine, flowAt, isWrongWay } from './flow';
 import { isGoalCell, isShelf, isStartCorridorX, isStartLineColumn, LEFT_SHELF_ROUTE_X, MAIN_AISLE_Y_BOTTOM, shelfLocationKey, START_ZONE_X_MIN } from './levelgen';
 import { PALETTE, paletteAlpha } from './palette';
+import { drawTraps, drawBananaPeelAt, isBananaPeelVisible, BANANA_PEEL_FADE_MS } from './traps';
 
 export interface RenderOpts {
   blink: number;
@@ -276,6 +277,8 @@ export interface CharacterDrawOpts {
   pushThrough?: boolean;
   jamStun?: boolean;
   rivalIndex?: number;
+  /** Placeholder FX while generic knockback is active. */
+  knockbackFx?: import('./knockback').KnockbackDrawFx;
 }
 
 export function drawCharacterAt(
@@ -365,7 +368,13 @@ function drawFloorBaseTile(
   }
 }
 
-export function eraseFloorCell(ctx: CanvasRenderingContext2D, state: GameState, gx: number, gy: number) {
+export function eraseFloorCell(
+  ctx: CanvasRenderingContext2D,
+  state: GameState,
+  gx: number,
+  gy: number,
+  blink = 0,
+) {
   const t = state.grid[gy]?.[gx];
   if (t !== 'F' && t !== 'G') return;
   const ox = gx * TILE;
@@ -375,6 +384,17 @@ export function eraseFloorCell(ctx: CanvasRenderingContext2D, state: GameState, 
   } else {
     drawLegacyFloorBase(ctx, ox, oy, gx, gy);
     drawGoalCell(ctx, ox, oy);
+  }
+  const trap = state.traps.find(
+    (tr) => tr.kind === 'bananaPeel' && tr.x === gx && tr.y === gy && isBananaPeelVisible(tr),
+  );
+  if (trap) {
+    const opacity = trap.fadeMs > 0 ? Math.max(0, trap.fadeMs / BANANA_PEEL_FADE_MS) : 1;
+    drawBananaPeelAt(ctx, gx, gy, {
+      slideX: trap.fadeSlideX,
+      slideY: trap.fadeSlideY,
+      opacity,
+    });
   }
 }
 
@@ -407,6 +427,8 @@ function renderInternal(ctx: CanvasRenderingContext2D, state: GameState, opts: R
   ctx.imageSmoothingEnabled = false;
 
   drawFloor(ctx, grid, state, cull);
+
+  drawTraps(ctx, state.traps, opts.blink, cull ? tileRange(cull) : undefined);
 
   const range = cull ? tileRange(cull) : { minGX: 0, maxGX: GRID_W - 1, minGY: 0, maxGY: GRID_H - 1 };
 
@@ -790,6 +812,27 @@ function drawCharacter(
   const stunColor = who === 'player' ? COLORS.playerStun : palette!.stun;
   const speedBoost = opts?.speedBoost && who === 'player' && !stunned;
   const pushThrough = opts?.pushThrough && who === 'player' && !stunned;
+  const kbFx = opts?.knockbackFx;
+
+  if (kbFx?.isAirborne) {
+    const charCy = cy + oy;
+    const pivotY = charCy - kbFx.liftPx;
+    ctx.translate(cx, pivotY);
+    ctx.rotate(kbFx.spinRad);
+    ctx.scale(kbFx.scale, kbFx.scale);
+    ctx.translate(-cx, -pivotY);
+    const ringR = 12 + (Math.sin(kbFx.phase * 12) + 1) * 4;
+    ctx.strokeStyle = 'rgba(255, 140, 60, 0.5)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(cx, charCy, ringR, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(255, 220, 160, 0.35)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(cx, charCy, ringR * 0.6, 0, Math.PI * 2);
+    ctx.stroke();
+  }
 
   if (speedBoost && moving) {
     ctx.globalAlpha = 0.28;

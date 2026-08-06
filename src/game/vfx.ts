@@ -96,6 +96,17 @@ export interface AbsorbTargetLookup {
   rivals: Record<number, { x: number; y: number }>;
 }
 
+/** Brief shockwave ring when generic knockback launches. */
+export interface KnockbackBurstFx {
+  x: number;
+  y: number;
+  dirX: number;
+  dirY: number;
+  timer: number;
+  maxTimer: number;
+  seed: number;
+}
+
 export interface VfxState {
   particles: Particle[];
   pickFlashes: PickFlash[];
@@ -105,6 +116,7 @@ export interface VfxState {
   orbTrailSparks: OrbTrailSpark[];
   harvestFeedbacks: HarvestFeedback[];
   skillBurst: SkillBurstState | null;
+  knockbackBursts: KnockbackBurstFx[];
   shakeMs: number;
   shakeDuration: number;
   shakeMag: number;
@@ -121,6 +133,7 @@ export function createVfx(): VfxState {
     orbTrailSparks: [],
     harvestFeedbacks: [],
     skillBurst: null,
+    knockbackBursts: [],
     shakeMs: 0,
     shakeDuration: 0,
     shakeMag: 0,
@@ -137,6 +150,7 @@ export function resetVfx(vfx: VfxState) {
   vfx.orbTrailSparks = [];
   vfx.harvestFeedbacks = [];
   vfx.skillBurst = null;
+  vfx.knockbackBursts = [];
   vfx.shakeMs = 0;
   vfx.shakeDuration = 0;
   vfx.shakeMag = 0;
@@ -196,6 +210,63 @@ export function triggerCollisionShake(vfx: VfxState, strong = false) {
   vfx.shakeDuration = strong ? 200 : 150;
   vfx.shakeMs = vfx.shakeDuration;
   vfx.shakeMag = strong ? 2.2 : 1.4;
+}
+
+/** Placeholder VFX hook for generic knockback launch (shockwave + dust). */
+export function triggerKnockbackFx(
+  vfx: VfxState,
+  gx: number,
+  gy: number,
+  dirX: number,
+  dirY: number,
+  seed: number,
+) {
+  const cx = gx * TILE + TILE / 2;
+  const cy = gy * TILE + TILE / 2;
+  vfx.knockbackBursts.push({
+    x: cx,
+    y: cy,
+    dirX,
+    dirY,
+    timer: 420,
+    maxTimer: 420,
+    seed,
+  });
+  triggerCollisionShake(vfx, true);
+  for (let i = 0; i < 6; i++) {
+    const angle = Math.atan2(dirY, dirX) + (Math.random() - 0.5) * 1.2;
+    const speed = 1.4 + Math.random() * 2.2;
+    vfx.particles.push({
+      x: cx + (Math.random() - 0.5) * 8,
+      y: cy + (Math.random() - 0.5) * 8,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      life: 220 + Math.random() * 180,
+      maxLife: 400,
+      color: i % 2 === 0 ? 'rgba(255,220,160,0.7)' : 'rgba(255,120,80,0.55)',
+      size: 2 + Math.random() * 2,
+      gravity: 0.004,
+    });
+  }
+}
+
+/** Smaller puff when knockback hits a wall mid-flight. */
+export function triggerKnockbackWallFx(vfx: VfxState, gx: number, gy: number) {
+  const cx = gx * TILE + TILE / 2;
+  const cy = gy * TILE + TILE / 2;
+  for (let i = 0; i < 4; i++) {
+    vfx.particles.push({
+      x: cx + (Math.random() - 0.5) * 6,
+      y: cy + (Math.random() - 0.5) * 6,
+      vx: (Math.random() - 0.5) * 1.6,
+      vy: (Math.random() - 0.5) * 1.6,
+      life: 160 + Math.random() * 120,
+      maxLife: 280,
+      color: 'rgba(200,200,210,0.55)',
+      size: 2,
+      gravity: 0.003,
+    });
+  }
 }
 
 export function triggerComboPop(
@@ -554,6 +625,10 @@ export function updateVfx(
     if (vfx.skillBurst.timer <= 0) vfx.skillBurst = null;
   }
 
+  vfx.knockbackBursts = vfx.knockbackBursts
+    .map((b) => ({ ...b, timer: b.timer - dtMs }))
+    .filter((b) => b.timer > 0);
+
   vfx.pickFlashes = vfx.pickFlashes
     .map((f) => ({ ...f, timer: f.timer - dtMs }))
     .filter((f) => f.timer > 0);
@@ -665,6 +740,22 @@ export function drawVfx(ctx: CanvasRenderingContext2D, vfx: VfxState, cull?: imp
     ctx.fillRect(Math.round(p.x), Math.round(p.y), Math.ceil(p.size), Math.ceil(p.size));
   }
   ctx.globalAlpha = 1;
+
+  for (const burst of vfx.knockbackBursts) {
+    const t = 1 - burst.timer / burst.maxTimer;
+    const radius = 6 + t * 22;
+    const alpha = (1 - t) * 0.55;
+    ctx.strokeStyle = `rgba(255, 180, 90, ${alpha})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(burst.x, burst.y, radius, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeStyle = `rgba(255, 240, 200, ${alpha * 0.65})`;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(burst.x, burst.y, radius * 0.55, 0, Math.PI * 2);
+    ctx.stroke();
+  }
 
   for (const t of vfx.popTexts) {
     const a = Math.min(1, t.timer / 200);

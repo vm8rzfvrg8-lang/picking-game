@@ -137,6 +137,28 @@ function synthKnockbackLight(variant) {
   return out;
 }
 
+/** Comical banana slip — loud "tsuru!" squeak + "hyun!" swoosh (normalized to peak). */
+function synthBananaSlip() {
+  const dur = 0.38;
+  const n = Math.floor(dur * SAMPLE_RATE);
+  const out = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const t = i / SAMPLE_RATE;
+    const env = Math.sin(Math.PI * Math.min(1, t / 0.32)) * Math.exp(-t * 3.2);
+    const squeak = Math.sin(2 * Math.PI * (1100 - t * 620) * t) * env * 0.72;
+    const swoosh = Math.sin(2 * Math.PI * (420 - t * 280) * t) * env * 0.58;
+    const noise = (Math.random() * 2 - 1) * env * 0.22;
+    out[i] = squeak + swoosh + noise;
+  }
+  let peak = 0;
+  for (let i = 0; i < n; i++) peak = Math.max(peak, Math.abs(out[i]));
+  if (peak > 0) {
+    const gain = 0.98 / peak;
+    for (let i = 0; i < n; i++) out[i] *= gain;
+  }
+  return out;
+}
+
 const jobs = [
   ['voice/scream_s1.wav', () => synthScreamSmall(0)],
   ['voice/scream_s2.wav', () => synthScreamSmall(1)],
@@ -157,6 +179,7 @@ const jobs = [
   ['knockback/kb_heavy_3.wav', () => synthKnockbackHeavy(2)],
   ['knockback/kb_light_1.wav', () => synthKnockbackLight(0)],
   ['knockback/kb_light_2.wav', () => synthKnockbackLight(1)],
+  ['gimmicks/banana_slip.wav', () => synthBananaSlip()],
 ];
 
 for (const [rel, fn] of jobs) {
