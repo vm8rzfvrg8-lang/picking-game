@@ -42,9 +42,9 @@ import { useTutorialManager } from './hooks/useTutorialManager';
 import { applyTutorialEvents, createTutorialStats, resetStep5Stats } from './game/tutorial/types';
 import { applyTutorialStepLayout } from './game/tutorial/layout';
 import {
-  getSuperSpeedMoveCooldown,
+  getPlayerMoveCooldown,
   isSkillReady,
-  isSuperSpeedActive,
+  isMusouActive,
   isPushThroughActive,
   SkillType,
 } from './game/skills';
@@ -70,6 +70,10 @@ import {
   triggerWinBurst,
   triggerCountdownPulse,
   triggerRaceGoBurst,
+  triggerMusouGhost,
+  triggerMusouArrival,
+  triggerJamLightning,
+  drawHadouAura,
   countdownBurstOrigin,
   updateVfx,
   type VfxState,
@@ -328,7 +332,7 @@ export default function App() {
     const playerTarget = getKnockbackVisualOffset(g.player);
     const playerLerp = isKnockbackMoving(g.player.knockback)
       ? 28
-      : isSuperSpeedActive(g.skills)
+      : isMusouActive(g)
         ? 24
         : 16;
     pv.x = lerp(pv.x, playerTarget.x, Math.min(1, playerLerp * dt));
@@ -362,7 +366,7 @@ export default function App() {
         tutorialInputActive && !countdownFrozen ? touchDirRef.current ?? kb.dir : null;
       const pick = tutorialInputActive && !countdownFrozen ? isPickInput(g, dir) : false;
       const moveCooldown = getComboMoveCooldown(
-        getSuperSpeedMoveCooldown(PLAYER_COOLDOWN_MS, g.skills),
+        getPlayerMoveCooldown(PLAYER_COOLDOWN_MS, g.skills, g),
         g.pickCombo,
       );
 
@@ -416,12 +420,18 @@ export default function App() {
             triggerCollisionShake(vfx, ev.playerWrongWay || ev.rivalWrongWay);
           }
         } else if (ev.type === 'knockback') {
-          if (ev.isAirborne) {
+          if (ev.randomLaunch || ev.isAirborne) {
             sfx.knockbackLaunch(ev.seed);
             triggerKnockbackFx(vfx, ev.x, ev.y, ev.dirX, ev.dirY, ev.seed);
           } else {
             sfx.knockbackLight(ev.seed);
           }
+        } else if (ev.type === 'musouStep') {
+          triggerMusouGhost(vfx, ev.x, ev.y);
+        } else if (ev.type === 'musouComplete') {
+          triggerMusouArrival(vfx, res.state.player.x, res.state.player.y);
+        } else if (ev.type === 'jamSignal') {
+          triggerJamLightning(vfx, ev.x, ev.y, ev.radius);
         } else if (ev.type === 'trapTriggered' && ev.kind === 'bananaPeel') {
           sfx.bananaPeel(ev.seed);
         } else if (ev.type === 'knockbackWallHit') {
@@ -529,6 +539,15 @@ export default function App() {
             blinkRef.current,
             vfxRef.current,
           );
+          if (isPushThroughActive(gameRef.current.skills)) {
+            drawHadouAura(
+              ctx,
+              playerVisualRef.current.x,
+              playerVisualRef.current.y,
+              gameRef.current.player.facing,
+              blinkRef.current,
+            );
+          }
           drawPickAbsorbVfx(
             ctx,
             vfxRef.current,
@@ -680,6 +699,7 @@ export default function App() {
             <SkillButton
               selectedSkill={game.selectedSkill}
               skills={game.skills}
+              game={game}
               onUse={handleUseSkill}
               docked
             />
@@ -745,7 +765,7 @@ function drawSmoothEntities(
       {
         moving: rMoving,
         squash: rMoving ? 0.92 : 1,
-        jamStun: rival.jamStun && rival.stun > 0,
+        jamStun: rival.jamGuideHiddenMs > 0,
         rivalIndex: rival.id,
         knockbackFx: getKnockbackDrawFx(rival.knockback),
       },
@@ -764,8 +784,9 @@ function drawSmoothEntities(
   drawCharacterAt(ctx, playerVisual.x, py, state.player.facing, blink, state.player.stun > 0, 'player', {
     moving: pMoving,
     squash: pMoving ? 0.9 : 1,
-    speedBoost: isSuperSpeedActive(state.skills) || state.pickCombo > 0,
+    speedBoost: isMusouActive(state) || state.pickCombo > 0,
     pushThrough: isPushThroughActive(state.skills),
+    musouFade: state.musouFadeMs > 0 ? state.musouFadeMs / 600 : 0,
     knockbackFx: getKnockbackDrawFx(state.player.knockback),
   });
   if (state.isPicking) {

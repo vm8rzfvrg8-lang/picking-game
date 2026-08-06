@@ -2,7 +2,7 @@ import { GRID_H, GRID_W, TILE } from './constants';
 import { gridDecorOffset, gridWorldX, gridWorldY } from './camera';
 import { getComboCanvasColor } from './combo';
 import { PALETTE } from './palette';
-import { SkillType } from './skills';
+import { SkillType, SKILL_HADOU_ARC_RADIUS } from './skills';
 import { classifyMoveTrail, drawFlowTrailArrow } from './flow';
 import type { Direction } from './constants';
 import {
@@ -12,6 +12,13 @@ import {
   skillBurstProgress,
   type SkillBurstState,
 } from './skillEffects';
+import {
+  drawJamLightningBolts,
+  drawJamLightningEffect,
+  generateJamLightningBolts,
+  JAM_LIGHTNING_BOLT_COUNT_MAIN,
+  type JamLightningBolt,
+} from './jamLightningVisual';
 
 const TRAIL_MARK_MS = 500;
 
@@ -107,6 +114,30 @@ export interface KnockbackBurstFx {
   seed: number;
 }
 
+export interface MusouGhostFx {
+  x: number;
+  y: number;
+  life: number;
+  maxLife: number;
+}
+
+export interface JamLightningFx {
+  gx: number;
+  gy: number;
+  timer: number;
+  maxTimer: number;
+  radius: number;
+  bolts: JamLightningBolt[];
+  seed: number;
+}
+
+export interface MusouArrivalFx {
+  gx: number;
+  gy: number;
+  timer: number;
+  maxTimer: number;
+}
+
 export interface VfxState {
   particles: Particle[];
   pickFlashes: PickFlash[];
@@ -117,6 +148,12 @@ export interface VfxState {
   harvestFeedbacks: HarvestFeedback[];
   skillBurst: SkillBurstState | null;
   knockbackBursts: KnockbackBurstFx[];
+  /** 無双疾走残像 */
+  musouGhosts: MusouGhostFx[];
+  /** 電波狂乱稲妻 */
+  jamLightning: JamLightningFx | null;
+  /** 無双疾走到着フェード */
+  musouArrival: MusouArrivalFx | null;
   shakeMs: number;
   shakeDuration: number;
   shakeMag: number;
@@ -134,6 +171,9 @@ export function createVfx(): VfxState {
     harvestFeedbacks: [],
     skillBurst: null,
     knockbackBursts: [],
+    musouGhosts: [],
+    jamLightning: null,
+    musouArrival: null,
     shakeMs: 0,
     shakeDuration: 0,
     shakeMag: 0,
@@ -151,6 +191,9 @@ export function resetVfx(vfx: VfxState) {
   vfx.harvestFeedbacks = [];
   vfx.skillBurst = null;
   vfx.knockbackBursts = [];
+  vfx.musouGhosts = [];
+  vfx.jamLightning = null;
+  vfx.musouArrival = null;
   vfx.shakeMs = 0;
   vfx.shakeDuration = 0;
   vfx.shakeMag = 0;
@@ -186,10 +229,10 @@ export function triggerSkillActivate(
   const cy = gridY * TILE + TILE / 2;
   const label =
     skill === SkillType.PushThrough
-      ? 'PUSH!'
+      ? '覇道!'
       : skill === SkillType.JamSignal
-        ? 'JAM!'
-        : 'SPEED UP!';
+        ? '電波!'
+        : '疾走!';
   const colors =
     skill === SkillType.PushThrough
       ? ['#ff5a5a', '#ff8a80']
@@ -204,6 +247,31 @@ export function triggerSkillActivate(
     label,
     color: colors[0],
   });
+}
+
+export function triggerMusouGhost(vfx: VfxState, gx: number, gy: number) {
+  vfx.musouGhosts.push({ x: gx, y: gy, life: 320, maxLife: 320 });
+  if (vfx.musouGhosts.length > 12) vfx.musouGhosts.shift();
+}
+
+export function triggerMusouArrival(vfx: VfxState, gx: number, gy: number) {
+  vfx.musouArrival = { gx, gy, timer: 600, maxTimer: 600 };
+}
+
+export function triggerJamLightning(vfx: VfxState, gx: number, gy: number, radius: number) {
+  const cx = gx * TILE + TILE / 2;
+  const cy = gy * TILE + TILE / 2;
+  const seed = Math.floor(Math.random() * 100000);
+  vfx.jamLightning = {
+    gx,
+    gy,
+    timer: 720,
+    maxTimer: 720,
+    radius,
+    seed,
+    bolts: generateJamLightningBolts(cx, cy, radius, seed, JAM_LIGHTNING_BOLT_COUNT_MAIN),
+  };
+  triggerCollisionShake(vfx, true);
 }
 
 export function triggerCollisionShake(vfx: VfxState, strong = false) {
@@ -629,6 +697,20 @@ export function updateVfx(
     .map((b) => ({ ...b, timer: b.timer - dtMs }))
     .filter((b) => b.timer > 0);
 
+  vfx.musouGhosts = vfx.musouGhosts
+    .map((g) => ({ ...g, life: g.life - dtMs }))
+    .filter((g) => g.life > 0);
+
+  if (vfx.jamLightning) {
+    vfx.jamLightning.timer -= dtMs;
+    if (vfx.jamLightning.timer <= 0) vfx.jamLightning = null;
+  }
+
+  if (vfx.musouArrival) {
+    vfx.musouArrival.timer -= dtMs;
+    if (vfx.musouArrival.timer <= 0) vfx.musouArrival = null;
+  }
+
   vfx.pickFlashes = vfx.pickFlashes
     .map((f) => ({ ...f, timer: f.timer - dtMs }))
     .filter((f) => f.timer > 0);
@@ -740,6 +822,47 @@ export function drawVfx(ctx: CanvasRenderingContext2D, vfx: VfxState, cull?: imp
     ctx.fillRect(Math.round(p.x), Math.round(p.y), Math.ceil(p.size), Math.ceil(p.size));
   }
   ctx.globalAlpha = 1;
+
+  for (const ghost of vfx.musouGhosts) {
+    const ox = ghost.x * TILE;
+    const oy = ghost.y * TILE;
+    const a = (ghost.life / ghost.maxLife) * 0.45;
+    ctx.fillStyle = `rgba(59, 212, 255, ${a})`;
+    ctx.fillRect(ox + 8, oy + 6, TILE - 16, TILE - 12);
+  }
+
+  if (vfx.jamLightning) {
+    const j = vfx.jamLightning;
+    const life = j.timer / j.maxTimer;
+    const cx = j.gx * TILE + TILE / 2;
+    const cy = j.gy * TILE + TILE / 2;
+    const alpha = life > 0.15 ? 1 : life / 0.15;
+    drawJamLightningEffect(ctx, cx, cy, j.radius, j.bolts, alpha, (1 - life) * 6);
+    // Brief center flash only — no dome
+    if (life > 0.5) {
+      const flash = (life - 0.5) / 0.5;
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.fillStyle = `rgba(255, 255, 220, ${flash * 0.35})`;
+      ctx.beginPath();
+      ctx.arc(cx, cy, TILE * 0.35 * flash, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  if (vfx.musouArrival) {
+    const m = vfx.musouArrival;
+    const t = 1 - m.timer / m.maxTimer;
+    const cx = m.gx * TILE + TILE / 2;
+    const cy = m.gy * TILE + TILE / 2;
+    const r = TILE * (1.2 + t * 1.8);
+    ctx.strokeStyle = `rgba(59, 212, 255, ${(1 - t) * 0.7})`;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.stroke();
+  }
 
   for (const burst of vfx.knockbackBursts) {
     const t = 1 - burst.timer / burst.maxTimer;
@@ -978,6 +1101,59 @@ export function drawPickAbsorbVfx(
     ctx.fillRect(Math.round(cx - TILE * 0.28), Math.round(cy - TILE * 0.32), Math.round(TILE * 0.56), Math.round(TILE * 0.6));
     ctx.restore();
   }
+}
+
+/** Draw 覇道威圧 semicircle aura following the player. */
+export function drawHadouAura(
+  ctx: CanvasRenderingContext2D,
+  gridX: number,
+  gridY: number,
+  facing: import('./constants').Facing,
+  blink: number,
+) {
+  const cx = gridX * TILE + TILE / 2;
+  const cy = gridY * TILE + TILE / 2;
+  const radius = TILE * SKILL_HADOU_ARC_RADIUS;
+  let start = 0;
+  let end = Math.PI;
+  switch (facing) {
+    case 'right':
+      start = -Math.PI / 2;
+      end = Math.PI / 2;
+      break;
+    case 'left':
+      start = Math.PI / 2;
+      end = Math.PI * 1.5;
+      break;
+    case 'up':
+      start = Math.PI;
+      end = Math.PI * 2;
+      break;
+    case 'down':
+      start = 0;
+      end = Math.PI;
+      break;
+  }
+  const pulse = 0.85 + 0.15 * Math.sin(blink * Math.PI * 4);
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.strokeStyle = `rgba(255, 90, 90, ${0.35 * pulse})`;
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius * pulse, start, end);
+  ctx.stroke();
+  ctx.strokeStyle = `rgba(255, 200, 120, ${0.25 * pulse})`;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius * 0.65 * pulse, start, end);
+  ctx.stroke();
+  ctx.fillStyle = `rgba(255, 60, 60, ${0.08 * pulse})`;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy);
+  ctx.arc(cx, cy, radius * pulse, start, end);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
 }
 
 /** Draw player-followed skill burst (call with live player grid position). */

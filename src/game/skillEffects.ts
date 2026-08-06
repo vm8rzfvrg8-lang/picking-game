@@ -1,5 +1,6 @@
 import { TILE } from './constants';
 import { SkillType } from './skills';
+import { drawJamLightningBurst } from './jamLightningVisual';
 
 export const SKILL_BURST_MS = 500;
 
@@ -61,7 +62,7 @@ export function drawSkillBurstEffect(
   ctx.restore();
 }
 
-/** 超早歩き: wind + yellow/orange shockwave from feet */
+/** 無双疾走: wind + cyan speed aura */
 function drawSuperSpeedBurst(
   ctx: CanvasRenderingContext2D,
   cx: number,
@@ -114,7 +115,7 @@ function drawSuperSpeedBurst(
   ctx.restore();
 }
 
-/** ゴリ押し: red / purple force burst rings */
+/** 覇道威圧: red semicircle force burst */
 function drawPushThroughBurst(
   ctx: CanvasRenderingContext2D,
   cx: number,
@@ -162,7 +163,7 @@ function drawPushThroughBurst(
   ctx.restore();
 }
 
-/** 妨害電波: blue/yellow electric pulse */
+/** 電波狂乱: 半径7マスへ放たれる黄青の激しい稲妻（ドームなし） */
 function drawJamSignalBurst(
   ctx: CanvasRenderingContext2D,
   cx: number,
@@ -170,59 +171,5 @@ function drawJamSignalBurst(
   progress: number,
   blink: number,
 ) {
-  const half = SKILL_BURST_PX / 2;
-  const pulse = 0.5 + 0.5 * Math.sin(blink * Math.PI * 8);
-
-  ctx.save();
-  ctx.globalCompositeOperation = 'lighter';
-
-  const field = ctx.createRadialGradient(cx, cy, 2, cx, cy, half);
-  field.addColorStop(0, `rgba(120,220,255,${0.45 * pulse})`);
-  field.addColorStop(0.5, `rgba(80,140,255,${0.25 * pulse})`);
-  field.addColorStop(1, 'rgba(40,60,200,0)');
-  ctx.fillStyle = field;
-  ctx.fillRect(cx - half, cy - half, SKILL_BURST_PX, SKILL_BURST_PX);
-
-  ctx.strokeStyle = `rgba(255,240,80,${0.8 * (1 - progress * 0.5)})`;
-  ctx.lineWidth = 2.5;
-  for (let ring = 0; ring < 2; ring++) {
-    const r = half * (0.35 + ring * 0.25 + progress * 0.3);
-    ctx.beginPath();
-    ctx.arc(cx, cy, r, 0, Math.PI * 2);
-    ctx.stroke();
-  }
-
-  ctx.strokeStyle = 'rgba(200,240,255,0.85)';
-  ctx.lineWidth = 2;
-  const bolts = 6;
-  for (let i = 0; i < bolts; i++) {
-    const baseAng = (i / bolts) * Math.PI * 2 + progress * 3;
-    let px = cx;
-    let py = cy;
-    ctx.beginPath();
-    ctx.moveTo(px, py);
-    const segments = 4;
-    for (let s = 1; s <= segments; s++) {
-      const t = s / segments;
-      const dist = half * (0.25 + progress * 0.65) * t;
-      const jag = (s % 2 === 0 ? 1 : -1) * 10 * (1 - t);
-      px = cx + Math.cos(baseAng) * dist + Math.sin(baseAng) * jag;
-      py = cy + Math.sin(baseAng) * dist + Math.cos(baseAng) * jag;
-      ctx.lineTo(px, py);
-    }
-    ctx.stroke();
-  }
-
-  ctx.fillStyle = `rgba(255,255,120,${0.7 * pulse})`;
-  for (let i = 0; i < 8; i++) {
-    const ang = (i / 8) * Math.PI * 2 + blink * 2;
-    ctx.fillRect(
-      cx + Math.cos(ang) * (half * 0.55) - 2,
-      cy + Math.sin(ang) * (half * 0.55) - 2,
-      4,
-      4,
-    );
-  }
-
-  ctx.restore();
+  drawJamLightningBurst(ctx, cx, cy, progress, blink, 7919);
 }

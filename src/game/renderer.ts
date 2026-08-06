@@ -452,7 +452,7 @@ function renderInternal(ctx: CanvasRenderingContext2D, state: GameState, opts: R
   drawGoals(ctx, state, opts.blink, cull);
 
   const pt = state.targets[state.currentTarget];
-  if (pt && !pt.done && (!cull || isCellVisible(pt.x, pt.y, cull))) {
+  if (pt && !pt.done && state.player.jamGuideHiddenMs <= 0 && (!cull || isCellVisible(pt.x, pt.y, cull))) {
     drawTargetGlow(ctx, pt.x, pt.y, opts.blink, true);
   }
 
@@ -931,12 +931,10 @@ function drawCharacter(
     }
   }
 
-  if (stunned) {
-    if (opts?.jamStun) {
-      drawJamStunIcon(ctx, cx, cy + oy - 18, blink);
-    } else {
-      drawStunStars(ctx, cx, cy + oy - 14, blink);
-    }
+  if (opts?.jamStun) {
+    drawJamStunIcon(ctx, cx, cy + oy - 18, blink);
+  } else if (stunned) {
+    drawStunStars(ctx, cx, cy + oy - 14, blink);
   }
 
   ctx.restore();
@@ -977,6 +975,15 @@ function drawJamStunIcon(
   ctx.moveTo(7, -6);
   ctx.lineTo(-7, 6);
   ctx.stroke();
+
+  // Floating ? marks
+  ctx.fillStyle = '#ffe46b';
+  ctx.font = 'bold 10px monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const qWob = Math.sin(blink * Math.PI * 3) * 2;
+  ctx.fillText('?', -14, -4 + qWob);
+  ctx.fillText('?', 14, -6 - qWob * 0.7);
 
   ctx.restore();
 }

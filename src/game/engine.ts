@@ -35,7 +35,14 @@ import {
   tickComboExpiry,
 } from './combo';
 import { registerFinish } from './result';
-import { createInitialSkills, isPushThroughActive, isSuperSpeedActive, tickSkills, useSkill, SkillType } from './skills';
+import type { GameEvent, StepResult } from './events';
+import { createInitialSkills, isPushThroughActive, isSuperSpeedActive, isMusouRunning, tickSkills, useSkill, SkillType, SKILL_JAM_RADIUS, SKILL_JAM_CONFUSED_STOP_CHANCE } from './skills';
+import {
+  applyRandomKnockbackToTarget,
+  stepHadouEffects,
+  stepMusouRun,
+  tickSkillEntityTimers,
+} from './skillRuntime';
 import { tutorialRivalPatrolDir } from './tutorial/layout';
 import {
   assignStartSpawns,
@@ -117,6 +124,8 @@ function createRivalEntity(
     pushBlockerIndex: null,
     narrowCorridorSince: -1,
     knockback: null,
+    knockbackImmuneMs: 0,
+    jamGuideHiddenMs: 0,
   };
 }
 
@@ -201,6 +210,8 @@ export function newGame(
       stun: 0,
       lastMoveDir: null,
       knockback: null,
+      knockbackImmuneMs: 0,
+      jamGuideHiddenMs: 0,
     },
     rivals,
     cpuCount: count,
@@ -236,6 +247,10 @@ export function newGame(
     maxPickCombo: 0,
     finishOrder: [],
     traps,
+    musouRunPath: null,
+    musouRunIndex: 0,
+    musouStepAccum: 0,
+    musouFadeMs: 0,
   };
 }
 
@@ -642,10 +657,41 @@ function applyRivalMovementStep(
   cpu: DifficultyConfig,
   events: GameEvent[],
 ): RivalStepResult {
+  if (r.jamGuideHiddenMs > 0) {
+    return rivalJamConfusedStep(s, r, rivalIndex, events);
+  }
   if (r.unstickMovesLeft > 0) {
     return rivalUnstickStep(s, r, rivalIndex, events);
   }
   return rivalPathStep(s, r, rivalIndex, cpu, events);
+}
+
+/** 電波狂乱: 棚へ向かわずランダム移動または停止。 */
+function rivalJamConfusedStep(
+  s: GameState,
+  r: RivalEntity,
+  rivalIndex: number,
+  events: GameEvent[],
+): RivalStepResult {
+  if (Math.random() < SKILL_JAM_CONFUSED_STOP_CHANCE) {
+    return { rival: r, collision: false, attemptDir: null, rivalRivalCollision: null };
+  }
+
+  const dirs: Direction[] = ['up', 'down', 'left', 'right'];
+  for (let i = dirs.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [dirs[i], dirs[j]] = [dirs[j], dirs[i]];
+  }
+
+  for (const dir of dirs) {
+    const { dx, dy } = DELTA[dir];
+    const nx = r.x + dx;
+    const ny = r.y + dy;
+    if (!isWalkable(s.grid, nx, ny)) continue;
+    return applyRivalMove(s, r, rivalIndex, dir, nx, ny, events);
+  }
+
+  return { rival: r, collision: false, attemptDir: null, rivalRivalCollision: null };
 }
 
 function trackRivalStuckState(
@@ -770,66 +816,7 @@ function rivalPathStep(
   return applyRivalMove(s, r, rivalIndex, best.dir, best.x, best.y, events);
 }
 
-export interface StepResult {
-  state: GameState;
-  events: GameEvent[];
-}
-
-export type GameEvent =
-  | { type: 'move'; who: 'player' | 'rival'; fromX: number; fromY: number; dir: Direction }
-  | { type: 'bump'; who: 'player' | 'rival' }
-  | { type: 'pickStart'; who: 'player' | 'rival' }
-  | { type: 'pickProgress'; who: 'player' | 'rival'; progress: number }
-  | { type: 'pickDone'; who: 'player' | 'rival'; index: number; entityId?: number }
-  | { type: 'pickCombo'; combo: number; tier: number }
-  | { type: 'pickCancel'; who: 'player' | 'rival' }
-  | {
-      type: 'collision';
-      involvesPlayer: boolean;
-      playerKnockedBack: boolean;
-      rivalKnockedBack: boolean;
-      playerWrongWay: boolean;
-      rivalWrongWay: boolean;
-      playerPushed: boolean;
-      rivalPushed: boolean;
-      /** Pitch seed for entity A (player or CPU mover). */
-      knockbackSeedA: number;
-      /** Pitch seed for entity B (rival or CPU blocker). */
-      knockbackSeedB: number;
-    }
-  | { type: 'skillUsed'; skill: SkillType }
-  | { type: 'yield'; who: 'player' | 'rival' }
-  | { type: 'win' }
-  | { type: 'lose' }
-  | {
-      type: 'knockback';
-      who: 'player' | 'rival';
-      rivalId?: number;
-      x: number;
-      y: number;
-      dirX: number;
-      dirY: number;
-      force: number;
-      durationMs: number;
-      seed: number;
-      isAirborne: boolean;
-    }
-  | {
-      type: 'knockbackWallHit';
-      who: 'player' | 'rival';
-      rivalId?: number;
-      x: number;
-      y: number;
-    }
-  | {
-      type: 'trapTriggered';
-      kind: 'bananaPeel';
-      x: number;
-      y: number;
-      who: 'player' | 'rival';
-      rivalId?: number;
-      seed: number;
-    };
+export type { GameEvent, StepResult } from './events';
 
 type CollisionEventDetail = Omit<
   Extract<GameEvent, { type: 'collision' }>,
@@ -959,6 +946,29 @@ function applyCollision(
   const rivalSkills = s.rivalSkills[rivalIndex] ?? createInitialSkills();
   const rivalPushThrough = isPushThroughActive(rivalSkills);
 
+  // 無双疾走中: 完全無敵・相手をランダム吹き飛び
+  if (isMusouRunning(s)) {
+    s = applyRandomKnockbackToTarget(
+      s,
+      rival.x,
+      rival.y,
+      { kind: 'rival', id: rival.id },
+      events,
+    );
+    rivals = s.rivals;
+    rival = rivals[rivalIndex];
+    player = { ...player, stun: 0 };
+    return finishCollisionFx(s, player, rivals, rivalIndex, events, {
+      type: 'collision',
+      playerKnockedBack: false,
+      rivalKnockedBack: true,
+      playerWrongWay: false,
+      rivalWrongWay: false,
+      playerPushed: false,
+      rivalPushed: true,
+    });
+  }
+
   // 相手ゴリ押し + 自分ピッキング中 → 強制ノックバック & キャンセル
   if (rivalPushThrough && saved.playerPicking) {
     const pushDir =
@@ -1015,48 +1025,18 @@ function applyCollision(
     });
   }
 
-  // 自分ゴリ押し → 相手のみ押し出し（ピッキング中なら継続）
+  // 覇道威圧 → 相手をランダム吹き飛び（ピッキング中なら継続）
   if (playerPushThrough) {
-    const rxKnock = rival.x;
-    const ryKnock = rival.y;
-    const pushDir =
-      playerDir && (playerMoved || pAggressor)
-        ? playerDir
-        : rivalDir ?? player.facing;
-
-    if (pushDir) {
-      const b = applySimpleKnockback(
-        grid,
-        rx0,
-        ry0,
-        null,
-        { x: px0, y: py0 },
-        'yield',
-        pushDir,
-        occupiers,
-      );
-      rival = { ...rival, x: b.x, y: b.y };
-    }
-
-    const separated = separateIfOverlapping(
-      grid,
-      { x: player.x, y: player.y },
-      { x: rival.x, y: rival.y },
-      false,
-      true,
+    s = applyRandomKnockbackToTarget(
+      s,
+      rival.x,
+      rival.y,
+      { kind: 'rival', id: rival.id },
+      events,
     );
-    player = { ...player, x: separated.player.x, y: separated.player.y, stun: 0 };
-    rival = { ...rival, x: separated.rival.x, y: separated.rival.y };
-
-    const rivalKnocked = rival.x !== rxKnock || rival.y !== ryKnock;
-    rival = {
-      ...rival,
-      stun: stunForCollisionKnockback(
-        rivalKnocked,
-        false,
-        isSuperSpeedActive(rivalSkills),
-      ),
-    };
+    rivals = s.rivals;
+    rival = rivals[rivalIndex];
+    player = { ...player, stun: 0 };
 
     const finalized = finalizePickingAfterCollision(
       s,
@@ -1064,7 +1044,7 @@ function applyCollision(
       events,
       saved,
       false,
-      rivalKnocked,
+      true,
     );
     s = finalized.state;
     rival = finalized.rival;
@@ -1073,11 +1053,11 @@ function applyCollision(
     return finishCollisionFx(s, player, rivals, rivalIndex, events, {
       type: 'collision',
       playerKnockedBack: false,
-      rivalKnockedBack: rivalKnocked,
+      rivalKnockedBack: true,
       playerWrongWay: false,
       rivalWrongWay: false,
       playerPushed: false,
-      rivalPushed: rivalKnocked,
+      rivalPushed: true,
     });
   }
 
@@ -1772,6 +1752,7 @@ export function step(state: GameState, input: Input, dtMs: number): StepResult {
   const prevPlayerCell = { x: s.player.x, y: s.player.y };
   const prevRivalCells = s.rivals.map((r) => ({ id: r.id, x: r.x, y: r.y }));
   s = tickSkills(s, dtMs);
+  s = tickSkillEntityTimers(s, dtMs);
   s.elapsed += dtMs;
   s = { ...s, traps: tickTrapAnimations(s.traps, dtMs) };
 
@@ -1785,7 +1766,23 @@ export function step(state: GameState, input: Input, dtMs: number): StepResult {
     s = used.state;
     if (used.used && used.skillId) {
       events.push({ type: 'skillUsed', skill: used.skillId });
+      if (used.skillId === SkillType.JamSignal) {
+        events.push({
+          type: 'jamSignal',
+          x: s.player.x,
+          y: s.player.y,
+          radius: SKILL_JAM_RADIUS,
+        });
+      }
     }
+  }
+
+  if (isMusouRunning(s)) {
+    s = stepMusouRun(s, dtMs, events);
+  }
+
+  if (isPushThroughActive(s.skills)) {
+    s = stepHadouEffects(s, events);
   }
 
   if (s.collisionFx > 0) s.collisionFx = Math.max(0, s.collisionFx - dtMs);
@@ -1820,7 +1817,7 @@ export function step(state: GameState, input: Input, dtMs: number): StepResult {
     } else {
       s.player = { ...s.player, stun: Math.max(0, s.player.stun - dtMs) };
     }
-  } else if (input.dir && !s.isPicking) {
+  } else if (!isMusouRunning(s) && input.dir && !s.isPicking) {
     const { dx, dy } = DELTA[input.dir];
     const nx = s.player.x + dx;
     const ny = s.player.y + dy;
@@ -2037,8 +2034,14 @@ function stepOneRival(
     return { rival: r, collision, attemptDir, rivalRivalCollision: null };
   }
 
+  if (r.jamGuideHiddenMs > 0 && r.isPicking) {
+    r.isPicking = false;
+    r.pickProgress = 0;
+    events.push({ type: 'pickCancel', who: 'rival' });
+  }
+
   const rt = r.targets[r.currentTarget];
-  if (rt && !rt.done) {
+  if (rt && !rt.done && r.jamGuideHiddenMs <= 0) {
     const adjacent =
       Math.abs(r.x - rt.x) + Math.abs(r.y - rt.y) === 1 && isShelf(s.grid, rt.x, rt.y);
 
@@ -2076,7 +2079,7 @@ function stepOneRival(
       r.pickProgress = 0;
       events.push({ type: 'pickStart', who: 'rival' });
     }
-  } else if (r.isPicking) {
+  } else if (r.isPicking && r.jamGuideHiddenMs <= 0) {
     r.isPicking = false;
     r.pickProgress = 0;
     events.push({ type: 'pickCancel', who: 'rival' });
@@ -2173,7 +2176,15 @@ function tryApplyBananaPeel(
   events: GameEvent[],
 ): GameState {
   const peelIndex = findActiveBananaPeelIndex(state, x, y);
-  if (peelIndex < 0 || !isTrapTargetSlippable(state, target)) return state;
+  if (peelIndex < 0) return state;
+
+  if (target.kind === 'player' && isMusouRunning(state)) {
+    const traps = [...state.traps];
+    traps[peelIndex] = beginBananaPeelFade(traps[peelIndex], { x: 0, y: 0 });
+    return { ...state, traps, version: state.version + 1 };
+  }
+
+  if (!isTrapTargetSlippable(state, target)) return state;
 
   const facing =
     target.kind === 'player'

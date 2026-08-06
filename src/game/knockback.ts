@@ -28,6 +28,9 @@ export interface KnockbackState {
   peakScale?: number;
   /** Override parabolic lift height in px (visual only). */
   liftPx?: number;
+  /** Snap to this cell when motion completes (random knockback landing). */
+  snapTargetX?: number;
+  snapTargetY?: number;
 }
 
 export interface KnockbackVisualOpts {
@@ -254,6 +257,10 @@ export function tickKnockbackEntity(
     knockback.slideX = 0;
     knockback.slideY = 0;
     knockback.distanceLeft = 0;
+    if (knockback.snapTargetX != null && knockback.snapTargetY != null) {
+      x = knockback.snapTargetX;
+      y = knockback.snapTargetY;
+    }
   }
 
   if (!isKnockbackMoving(knockback)) {

@@ -1,4 +1,5 @@
-import { GRID_H, GRID_W, PickTarget, Tile } from './constants';
+import type { PickTarget, Tile } from './constants';
+import { GRID_H, GRID_W } from './grid';
 
 /** Main aisle rows (2-wide, left-side traffic). */
 export const MAIN_AISLE_Y_TOP = 6;
@@ -225,6 +226,50 @@ export function bfsDistances(grid: Tile[][], sx: number, sy: number): number[][]
     }
   }
   return dist;
+}
+
+/** Shortest walkable path from (sx,sy) to (tx,ty); excludes start, includes goal. */
+export function bfsPath(
+  grid: Tile[][],
+  sx: number,
+  sy: number,
+  tx: number,
+  ty: number,
+): { x: number; y: number }[] | null {
+  if (!isWalkable(grid, sx, sy) || !isWalkable(grid, tx, ty)) return null;
+  if (sx === tx && sy === ty) return [];
+
+  const parent = new Map<string, { x: number; y: number }>();
+  const key = (x: number, y: number) => `${x},${y}`;
+  const q: { x: number; y: number }[] = [{ x: sx, y: sy }];
+  parent.set(key(sx, sy), { x: -1, y: -1 });
+
+  const maxSteps = GRID_W * GRID_H;
+  for (let step = 0; step < maxSteps && q.length > 0; step++) {
+    const { x, y } = q.shift()!;
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (!isWalkable(grid, nx, ny)) continue;
+      const k = key(nx, ny);
+      if (parent.has(k)) continue;
+      parent.set(k, { x, y });
+      if (nx === tx && ny === ty) {
+        const path: { x: number; y: number }[] = [];
+        let cx = tx;
+        let cy = ty;
+        while (!(cx === sx && cy === sy)) {
+          path.unshift({ x: cx, y: cy });
+          const p = parent.get(key(cx, cy))!;
+          cx = p.x;
+          cy = p.y;
+        }
+        return path;
+      }
+      q.push({ x: nx, y: ny });
+    }
+  }
+  return null;
 }
 
 /** BFS with extra cost for moving against lane flow. */

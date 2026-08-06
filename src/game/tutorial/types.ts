@@ -226,8 +226,7 @@ export function applyTutorialEvents(
   if (
     game.tutorialSubStep === 3 &&
     (step5JamUsedWhileRivalPicking || stats.step5JamUsedWhileRivalPicking) &&
-    game.rivals[0]?.jamStun &&
-    game.rivals[0]?.stun > 0
+    (game.rivals[0]?.jamGuideHiddenMs ?? 0) > 0
   ) {
     step5JamSignalCleared = true;
   }

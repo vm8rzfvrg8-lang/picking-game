@@ -38,6 +38,10 @@ export interface PlayerEntity {
   lastMoveDir: Direction | null;
   /** Generic knockback motion (traps, gimmicks, items). */
   knockback: KnockbackState | null;
+  /** Immunity to random knockback while > 0 (ms). */
+  knockbackImmuneMs: number;
+  /** Hide pick-point guide while > 0 (ms) — 電波狂乱. */
+  jamGuideHiddenMs: number;
 }
 
 export interface RivalEntity {
@@ -74,6 +78,10 @@ export interface RivalEntity {
   narrowCorridorSince: number;
   /** Generic knockback motion (traps, gimmicks, items). */
   knockback: KnockbackState | null;
+  /** Immunity to random knockback while > 0 (ms). */
+  knockbackImmuneMs: number;
+  /** Hide pick-point guide while > 0 (ms) — 電波狂乱. */
+  jamGuideHiddenMs: number;
 }
 
 // A pick target: a bookshelf cell with location number and pick order
@@ -86,14 +94,7 @@ export interface PickTarget {
 }
 
 /** World map width in tiles (horizontal warehouse repeat). */
-export const GRID_W = 75;
-/** World map height in tiles. */
-export const GRID_H = 14;
-/** Visible viewport width in tiles (canvas shows this many columns). */
-export const VIEWPORT_W = 18;
-/** Visible viewport height in tiles. */
-export const VIEWPORT_H = 14;
-export const TILE = 36;
+export { GRID_W, GRID_H, VIEWPORT_W, VIEWPORT_H, TILE } from './grid';
 
 export const MIN_CPU_COUNT = 1;
 export const MAX_CPU_COUNT = 7;
@@ -141,7 +142,6 @@ export const MAX_LOOP_ITERATIONS_PER_FRAME = 10;
 
 import type { Difficulty } from './difficulty';
 import type { SkillState, SkillType } from './skills';
-import { createInitialSkills } from './skills';
 import { PALETTE, paletteAlpha } from './palette';
 
 export { PALETTE } from './palette';
@@ -217,6 +217,12 @@ export interface GameState {
   finishOrder: Array<{ kind: 'player' } | { kind: 'rival'; id: number }>;
   /** Map-placed traps (banana peels, etc.). */
   traps: TrapEntity[];
+  /** 無双疾走: auto-run path to next pick (null = inactive). */
+  musouRunPath: { x: number; y: number }[] | null;
+  musouRunIndex: number;
+  musouStepAccum: number;
+  /** Fade-out timer after 無双疾走 arrival (ms). */
+  musouFadeMs: number;
 }
 
 export function clampCpuCount(count: number): number {

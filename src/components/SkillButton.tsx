@@ -1,5 +1,6 @@
 import { Shield, WifiOff, Zap } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
+import type { GameState } from '../game/constants';
 import {
   getActiveSkillDuration,
   getSkillDefinition,
@@ -14,6 +15,7 @@ import {
 interface Props {
   selectedSkill: SkillType;
   skills: SkillState;
+  game?: GameState;
   onUse: () => void;
   /** Canvas外・右下ドック配置（コンパクト） */
   docked?: boolean;
@@ -43,12 +45,12 @@ const SKILL_THEME: Record<SkillType, { ready: string; fill: string; glow: string
   },
 };
 
-export function SkillButton({ selectedSkill, skills, onUse, docked = false }: Props) {
+export function SkillButton({ selectedSkill, skills, game, onUse, docked = false }: Props) {
   const def = getSkillDefinition(selectedSkill);
   const theme = SKILL_THEME[selectedSkill];
   const Icon = SKILL_ICONS[selectedSkill];
-  const active = isSkillEffectActive(skills);
-  const ready = isSkillReady(skills);
+  const active = isSkillEffectActive(skills, game);
+  const ready = isSkillReady(skills, game);
   const gaugeRatio = getSkillGaugeRatio(skills);
   const gaugePercent = Math.round(gaugeRatio * 100);
   const disabled = !ready;
@@ -58,9 +60,9 @@ export function SkillButton({ selectedSkill, skills, onUse, docked = false }: Pr
 
   const statusText = active
     ? selectedSkill === SkillType.SuperSpeed
-      ? '加速中!'
+      ? '疾走中!'
       : selectedSkill === SkillType.PushThrough
-        ? '無敵中!'
+        ? '威圧中!'
         : '発動!'
     : ready
       ? 'READY!'
