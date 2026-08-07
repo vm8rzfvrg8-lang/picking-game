@@ -279,6 +279,11 @@ export interface CharacterDrawOpts {
   rivalIndex?: number;
   /** Placeholder FX while generic knockback is active. */
   knockbackFx?: import('./knockback').KnockbackDrawFx;
+  /** Neon afterimage clone for 無双疾走. */
+  ghostMode?: boolean;
+  ghostAlpha?: number;
+  ghostHue?: 'cyan' | 'gold';
+  musouFade?: number;
 }
 
 export function drawCharacterAt(
@@ -813,6 +818,29 @@ function drawCharacter(
   const speedBoost = opts?.speedBoost && who === 'player' && !stunned;
   const pushThrough = opts?.pushThrough && who === 'player' && !stunned;
   const kbFx = opts?.knockbackFx;
+  const ghostMode = opts?.ghostMode === true;
+
+  if (ghostMode) {
+    const alpha = opts?.ghostAlpha ?? 0.4;
+    const gold = opts?.ghostHue === 'gold';
+    const bodyGlow = gold ? '#ffe566' : '#00e8ff';
+    const edgeGlow = gold ? '#ffb830' : '#0099cc';
+    ctx.globalAlpha = alpha;
+    drawGroundShadow(ctx, cx, gy * TILE + TILE - 3, 8, 2);
+    ctx.fillStyle = edgeGlow;
+    ctx.fillRect(px(cx - 7), px(cy + 5 + oy), 3, 5);
+    ctx.fillRect(px(cx + 4), px(cy + 5 + oy), 3, 5);
+    const bx = px(cx - 9);
+    const by = px(cy - 9 + oy);
+    ctx.fillStyle = bodyGlow;
+    roundRectFill(ctx, bx, by, 18, 16, 4);
+    ctx.fillStyle = gold ? 'rgba(255,255,200,0.55)' : 'rgba(180,255,255,0.55)';
+    ctx.fillRect(Math.round(cx - 7), Math.round(cy - 8 + oy), 12, 2);
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.restore();
+    return;
+  }
 
   if (kbFx?.isAirborne) {
     const charCy = cy + oy;
@@ -835,11 +863,13 @@ function drawCharacter(
   }
 
   if (speedBoost && moving) {
-    ctx.globalAlpha = 0.28;
-    const trailDx = facing === 'left' ? 7 : facing === 'right' ? -7 : 0;
-    const trailDy = facing === 'up' ? 7 : facing === 'down' ? -7 : 0;
-    ctx.fillStyle = '#7ae5ff';
-    ctx.fillRect(px(cx + trailDx - 9), px(cy + oy + trailDy - 8), 18, 16);
+    ctx.globalAlpha = 0.42;
+    const trailDx = facing === 'left' ? 9 : facing === 'right' ? -9 : 0;
+    const trailDy = facing === 'up' ? 9 : facing === 'down' ? -9 : 0;
+    ctx.fillStyle = '#00e8ff';
+    ctx.fillRect(px(cx + trailDx - 10), px(cy + oy + trailDy - 9), 20, 18);
+    ctx.fillStyle = 'rgba(255, 230, 100, 0.55)';
+    ctx.fillRect(px(cx + trailDx - 6), px(cy + oy + trailDy - 5), 12, 10);
     ctx.globalAlpha = 1;
   }
 
@@ -854,11 +884,32 @@ function drawCharacter(
 
   if (speedBoost) {
     const pulse = 0.55 + 0.45 * Math.sin(blink * Math.PI * 5);
-    ctx.strokeStyle = `rgba(59,212,255,${0.45 * pulse})`;
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.strokeStyle = `rgba(0, 230, 255, ${0.55 * pulse})`;
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.arc(cx, cy + oy, 22 + pulse * 3, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeStyle = `rgba(255, 220, 80, ${0.35 * pulse})`;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(cx, cy + oy, 14 + pulse * 2, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  const musouFade = opts?.musouFade ?? 0;
+  if (musouFade > 0) {
+    const pulse = musouFade * (0.65 + 0.35 * Math.sin(blink * Math.PI * 4));
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.strokeStyle = `rgba(0, 240, 255, ${0.4 * pulse})`;
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.arc(cx, cy + oy, 20, 0, Math.PI * 2);
+    ctx.arc(cx, cy + oy, 24 + (1 - musouFade) * 10, 0, Math.PI * 2);
     ctx.stroke();
+    ctx.restore();
   }
 
   // Shadow under feet
@@ -994,20 +1045,36 @@ function drawStunStars(
   cy: number,
   blink: number,
 ) {
-  const rot = blink * Math.PI * 2;
+  const pulse = 0.65 + 0.35 * Math.sin(blink * Math.PI * 5);
+  const rot = blink * Math.PI * 2.4;
+
+  ctx.save();
+  ctx.globalAlpha = pulse;
+
+  ctx.strokeStyle = `rgba(255, 228, 107, ${0.45 * pulse})`;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(cx, cy - 12, 8 + pulse * 2, 0, Math.PI * 2);
+  ctx.stroke();
+
+  ctx.fillStyle = '#ffe46b';
   for (let i = 0; i < 3; i++) {
     const ang = rot + (i / 3) * Math.PI * 2;
     const sx = cx + Math.cos(ang) * 10;
-    const sy = cy + Math.sin(ang) * 4;
-    ctx.fillStyle = '#ffe46b';
+    const sy = cy - 14 + Math.sin(ang) * 3;
     ctx.beginPath();
-    ctx.moveTo(sx, sy - 3);
-    ctx.lineTo(sx + 2, sy);
-    ctx.lineTo(sx, sy + 3);
-    ctx.lineTo(sx - 2, sy);
+    ctx.moveTo(sx, sy - 4);
+    ctx.lineTo(sx + 2.5, sy);
+    ctx.lineTo(sx, sy + 4);
+    ctx.lineTo(sx - 2.5, sy);
     ctx.closePath();
     ctx.fill();
   }
+
+  ctx.fillStyle = `rgba(255, 255, 200, ${0.35 * pulse})`;
+  ctx.fillRect(Math.round(cx - 1), Math.round(cy - 20), 2, 2);
+
+  ctx.restore();
 }
 
 function drawPickGauge(

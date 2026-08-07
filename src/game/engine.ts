@@ -37,6 +37,7 @@ import {
 import { registerFinish } from './result';
 import type { GameEvent, StepResult } from './events';
 import { createInitialSkills, isPushThroughActive, isSuperSpeedActive, isMusouRunning, tickSkills, useSkill, SkillType, SKILL_JAM_RADIUS, SKILL_JAM_CONFUSED_STOP_CHANCE } from './skills';
+import { isAirborneKnockbackActive } from './randomKnockback';
 import {
   applyRandomKnockbackToTarget,
   stepHadouEffects,
@@ -500,6 +501,9 @@ function applyRivalMove(
   };
 
   if (nx === s.player.x && ny === s.player.y) {
+    if (isMusouRunning(s)) {
+      return { rival: r, collision: false, attemptDir: null, rivalRivalCollision: null };
+    }
     const slid = trySlidePast(s.player.x, s.player.y);
     if (slid) return slid;
     events.push({ type: 'bump', who: 'rival' });
@@ -946,8 +950,13 @@ function applyCollision(
   const rivalSkills = s.rivalSkills[rivalIndex] ?? createInitialSkills();
   const rivalPushThrough = isPushThroughActive(rivalSkills);
 
-  // 無双疾走中: 完全無敵・相手をランダム吹き飛び
+  // 無双疾走中: 完全無敵・相手をランダム吹き飛び（走者の位置は固定）
   if (isMusouRunning(s)) {
+    if (isAirborneKnockbackActive(rival)) {
+      return s;
+    }
+    const musouX = s.player.x;
+    const musouY = s.player.y;
     s = applyRandomKnockbackToTarget(
       s,
       rival.x,
@@ -957,7 +966,7 @@ function applyCollision(
     );
     rivals = s.rivals;
     rival = rivals[rivalIndex];
-    player = { ...player, stun: 0 };
+    player = { ...player, x: musouX, y: musouY, stun: 0 };
     return finishCollisionFx(s, player, rivals, rivalIndex, events, {
       type: 'collision',
       playerKnockedBack: false,
@@ -1761,7 +1770,7 @@ export function step(state: GameState, input: Input, dtMs: number): StepResult {
     s.pickCombo = 0;
   }
 
-  if (input.useSkill) {
+  if (input.useSkill && s.player.stun <= 0 && !s.player.knockback) {
     const used = useSkill(s);
     s = used.state;
     if (used.used && used.skillId) {
@@ -1943,6 +1952,11 @@ export function step(state: GameState, input: Input, dtMs: number): StepResult {
     overlapSepIterations++;
     if (overlapSepIterations > MAX_LOOP_ITERATIONS_PER_FRAME) break;
     if (s.player.x !== s.rivals[i].x || s.player.y !== s.rivals[i].y) continue;
+
+    if (isMusouRunning(s)) {
+      continue;
+    }
+
     const sep = separateIfOverlapping(
       s.grid,
       { x: s.player.x, y: s.player.y },
@@ -2283,7 +2297,7 @@ export function applyKnockback(
     s.player = {
       ...s.player,
       knockback: kb,
-      stun: durationMs,
+      stun: isAirborne ? 0 : durationMs,
       facing,
     };
     events.push({
@@ -2312,7 +2326,7 @@ export function applyKnockback(
   rival = {
     ...rival,
     knockback: kb,
-    stun: durationMs,
+    stun: isAirborne ? 0 : durationMs,
     facing,
   };
   const rivals = [...s.rivals];

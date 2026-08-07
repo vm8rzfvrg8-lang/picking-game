@@ -1,10 +1,17 @@
 import type { Direction, Facing, GameState } from './constants';
-import { PLAYER_COOLDOWN_MS } from './constants';
+import { MAX_LOOP_ITERATIONS_PER_FRAME, PLAYER_COOLDOWN_MS } from './constants';
 import type { GameEvent } from './events';
 import {
   buildOccupancyCheck,
   buildRandomKnockbackState,
+  buildRadialKnockbackState,
+  canReceiveMusouShockwave,
   canReceiveRandomKnockback,
+  isInMusouShockwaveRadius,
+  MUSOU_SHOCKWAVE_KB_DISTANCE,
+  MUSOU_SHOCKWAVE_KB_DURATION_MS,
+  MUSOU_SHOCKWAVE_KB_IMMUNE_MS,
+  pickRadialLandingCell,
   pickRandomLandingCell,
   RANDOM_KB_DURATION_MS,
   RANDOM_KB_IMMUNE_MS,
@@ -24,7 +31,6 @@ import {
   isMusouRunning,
   isPushThroughActive,
 } from './skills';
-import { isWalkable } from './levelgen';
 
 const FACING_FROM_DIR: Record<Direction, Facing> = {
   up: 'up',
@@ -92,7 +98,7 @@ function applyRandomKnockbackToTarget(
     s.player = {
       ...s.player,
       knockback: kb,
-      stun: RANDOM_KB_DURATION_MS,
+      stun: 0,
       facing,
       knockbackImmuneMs: RANDOM_KB_DURATION_MS + RANDOM_KB_IMMUNE_MS,
     };
@@ -125,7 +131,7 @@ function applyRandomKnockbackToTarget(
   nextRival = {
     ...nextRival,
     knockback: kb,
-    stun: RANDOM_KB_DURATION_MS,
+    stun: 0,
     facing,
     knockbackImmuneMs: RANDOM_KB_DURATION_MS + RANDOM_KB_IMMUNE_MS,
   };
@@ -150,6 +156,129 @@ function applyRandomKnockbackToTarget(
   return { ...state, rivals, version: state.version + 1 };
 }
 
+function applyRadialKnockbackToTarget(
+  state: GameState,
+  centerX: number,
+  centerY: number,
+  target: KnockbackTarget,
+  events: GameEvent[],
+): GameState {
+  const isOccupied = buildOccupancyCheck(state);
+  let fromX = 0;
+  let fromY = 0;
+
+  if (target.kind === 'player') {
+    fromX = state.player.x;
+    fromY = state.player.y;
+    if (!canReceiveMusouShockwave(state.player)) return state;
+  } else {
+    const rival = state.rivals.find((r) => r.id === target.id);
+    if (!rival || !canReceiveMusouShockwave(rival)) return state;
+    fromX = rival.x;
+    fromY = rival.y;
+  }
+
+  if (!isInMusouShockwaveRadius(centerX, centerY, fromX, fromY)) return state;
+
+  const landing = pickRadialLandingCell(
+    state.grid,
+    centerX,
+    centerY,
+    fromX,
+    fromY,
+    MUSOU_SHOCKWAVE_KB_DISTANCE,
+    (x, y) => isOccupied(x, y, target),
+  );
+  if (!landing) return state;
+
+  const seed = Math.floor(Math.random() * 10000);
+  const kb = buildRadialKnockbackState(fromX, fromY, landing.x, landing.y, seed);
+  const facing = facingFromKnockback({ x: landing.x - fromX, y: landing.y - fromY });
+
+  if (target.kind === 'player') {
+    let s = { ...state, version: state.version + 1 };
+    if (s.isPicking) {
+      s = { ...s, isPicking: false, pickProgress: 0 };
+      events.push({ type: 'pickCancel', who: 'player' });
+    }
+    s.player = {
+      ...s.player,
+      knockback: kb,
+      stun: 0,
+      facing,
+      knockbackImmuneMs: MUSOU_SHOCKWAVE_KB_DURATION_MS + MUSOU_SHOCKWAVE_KB_IMMUNE_MS,
+    };
+    events.push({
+      type: 'knockback',
+      who: 'player',
+      x: s.player.x,
+      y: s.player.y,
+      dirX: kb.dirX,
+      dirY: kb.dirY,
+      force: kb.totalDistance,
+      durationMs: MUSOU_SHOCKWAVE_KB_DURATION_MS,
+      seed,
+      isAirborne: true,
+      randomLaunch: true,
+    });
+    return s;
+  }
+
+  const rivalIndex = state.rivals.findIndex((r) => r.id === target.id);
+  if (rivalIndex < 0) return state;
+  const rival = state.rivals[rivalIndex];
+  let nextRival = { ...rival };
+  if (nextRival.isPicking) {
+    nextRival = { ...nextRival, isPicking: false, pickProgress: 0 };
+    events.push({ type: 'pickCancel', who: 'rival' });
+  }
+  nextRival = {
+    ...nextRival,
+    knockback: kb,
+    stun: 0,
+    facing,
+    knockbackImmuneMs: MUSOU_SHOCKWAVE_KB_DURATION_MS + MUSOU_SHOCKWAVE_KB_IMMUNE_MS,
+  };
+
+  const rivals = [...state.rivals];
+  rivals[rivalIndex] = nextRival;
+  events.push({
+    type: 'knockback',
+    who: 'rival',
+    rivalId: target.id,
+    x: nextRival.x,
+    y: nextRival.y,
+    dirX: kb.dirX,
+    dirY: kb.dirY,
+    force: kb.totalDistance,
+    durationMs: MUSOU_SHOCKWAVE_KB_DURATION_MS,
+    seed,
+    isAirborne: true,
+    randomLaunch: true,
+  });
+
+  return { ...state, rivals, version: state.version + 1 };
+}
+
+function applyMusouArrivalShockwave(state: GameState, events: GameEvent[]): GameState {
+  const px = state.player.x;
+  const py = state.player.y;
+  let s = state;
+
+  for (const rival of s.rivals) {
+    if (!isInMusouShockwaveRadius(px, py, rival.x, rival.y)) continue;
+    s = applyRadialKnockbackToTarget(
+      s,
+      px,
+      py,
+      { kind: 'rival', id: rival.id },
+      events,
+    );
+  }
+
+  return s;
+}
+
 function clearBananaAt(state: GameState, x: number, y: number): GameState {
   const idx = state.traps.findIndex((t) => t.kind === 'bananaPeel' && t.x === x && t.y === y && t.active);
   if (idx < 0) return state;
@@ -166,20 +295,28 @@ export function stepMusouRun(state: GameState, dtMs: number, events: GameEvent[]
   const stepMs = getPlayerMoveCooldown(PLAYER_COOLDOWN_MS, s.skills, s);
   s = { ...s, musouStepAccum: s.musouStepAccum + dtMs };
 
-  while (s.musouStepAccum >= stepMs && s.musouRunPath && s.musouRunIndex < s.musouRunPath.length) {
+  let musouStepIterations = 0;
+  while (
+    s.musouStepAccum >= stepMs &&
+    s.musouRunPath &&
+    s.musouRunIndex < s.musouRunPath.length &&
+    musouStepIterations < MAX_LOOP_ITERATIONS_PER_FRAME
+  ) {
+    musouStepIterations++;
     s.musouStepAccum -= stepMs;
     const next = s.musouRunPath[s.musouRunIndex];
     const fromX = s.player.x;
     const fromY = s.player.y;
     const dir = dirBetween(fromX, fromY, next.x, next.y);
-    if (!dir || !isWalkable(s.grid, next.x, next.y)) {
+    if (!dir) {
+      s = applyMusouArrivalShockwave(s, events);
       s = completeMusouRun(s);
-      events.push({ type: 'musouComplete' });
+      events.push({ type: 'musouComplete', x: s.player.x, y: s.player.y });
       break;
     }
 
     const rivalIdx = findRivalAt(s, next.x, next.y);
-    if (rivalIdx != null) {
+    if (rivalIdx != null && canReceiveRandomKnockback(s.rivals[rivalIdx])) {
       s = applyRandomKnockbackToTarget(
         s,
         next.x,
@@ -208,8 +345,9 @@ export function stepMusouRun(state: GameState, dtMs: number, events: GameEvent[]
   }
 
   if (s.musouRunPath && s.musouRunIndex >= s.musouRunPath.length) {
+    s = applyMusouArrivalShockwave(s, events);
     s = completeMusouRun(s);
-    events.push({ type: 'musouComplete' });
+    events.push({ type: 'musouComplete', x: s.player.x, y: s.player.y });
   }
 
   return s;

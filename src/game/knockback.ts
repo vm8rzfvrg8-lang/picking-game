@@ -46,6 +46,9 @@ const MIN_FORCE = 0.25;
 const MAX_FORCE = 12;
 const MIN_DURATION_MS = 120;
 
+/** Post-landing stun after airborne knockback completes (1s @ 60fps). */
+export const AIRBORNE_LANDING_STUN_MS = 1000;
+
 export function normalizeKnockbackDirection(dir: KnockbackDirection): { x: number; y: number } {
   if ('angle' in dir) {
     return { x: Math.cos(dir.angle), y: Math.sin(dir.angle) };
@@ -201,15 +204,23 @@ export function tickKnockbackEntity(
   let { x, y, stun, knockback } = entity;
   let hitWall = false;
 
-  stun = Math.max(0, stun - dtMs);
   if (!knockback) {
+    stun = Math.max(0, stun - dtMs);
     return { x, y, knockback: null, stun, hitWall };
   }
 
   knockback = { ...knockback };
-  knockback.fxPhase += dtMs * (knockback.isAirborne ? 0.048 : 0.008);
+  const isAirborne = knockback.isAirborne;
+  knockback.fxPhase += dtMs * (isAirborne ? 0.048 : 0.008);
   knockback.stunMs = Math.max(0, knockback.stunMs - dtMs);
-  stun = Math.max(stun, knockback.stunMs);
+
+  if (isAirborne) {
+    // Airborne: no foot-stun until landing (applied below).
+    stun = 0;
+  } else {
+    stun = Math.max(0, stun - dtMs);
+    stun = Math.max(stun, knockback.stunMs);
+  }
 
   if (knockback.distanceLeft > 0.001) {
     const dtSec = dtMs / 1000;
@@ -264,7 +275,11 @@ export function tickKnockbackEntity(
   }
 
   if (!isKnockbackMoving(knockback)) {
+    const landedAirborne = isAirborne;
     knockback = null;
+    if (landedAirborne) {
+      stun = AIRBORNE_LANDING_STUN_MS;
+    }
   }
 
   return { x, y, knockback, stun, hitWall };

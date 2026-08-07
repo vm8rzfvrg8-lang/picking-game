@@ -57,7 +57,7 @@ export type GameEvent =
       seed: number;
     }
   | { type: 'musouStep'; x: number; y: number }
-  | { type: 'musouComplete' }
+  | { type: 'musouComplete'; x: number; y: number }
   | { type: 'jamSignal'; x: number; y: number; radius: number };
 
 export interface StepResult {

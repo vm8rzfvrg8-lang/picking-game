@@ -13,7 +13,19 @@ import {
   type SkillBurstState,
 } from './skillEffects';
 import {
-  drawJamLightningBolts,
+  createMusouTrailState,
+  drawMusouArrivalBurst,
+  drawMusouHitRings,
+  clearMusouTrailHistory,
+  ensureMusouTrailState,
+  resetMusouTrailState,
+  tickMusouTrail,
+  triggerMusouArrivalBurst,
+  triggerMusouArrivalShockwave,
+  triggerMusouHitRing,
+  type MusouTrailState,
+} from './musouVisual';
+import {
   drawJamLightningEffect,
   generateJamLightningBolts,
   JAM_LIGHTNING_BOLT_COUNT_MAIN,
@@ -114,13 +126,6 @@ export interface KnockbackBurstFx {
   seed: number;
 }
 
-export interface MusouGhostFx {
-  x: number;
-  y: number;
-  life: number;
-  maxLife: number;
-}
-
 export interface JamLightningFx {
   gx: number;
   gy: number;
@@ -129,13 +134,6 @@ export interface JamLightningFx {
   radius: number;
   bolts: JamLightningBolt[];
   seed: number;
-}
-
-export interface MusouArrivalFx {
-  gx: number;
-  gy: number;
-  timer: number;
-  maxTimer: number;
 }
 
 export interface VfxState {
@@ -148,12 +146,10 @@ export interface VfxState {
   harvestFeedbacks: HarvestFeedback[];
   skillBurst: SkillBurstState | null;
   knockbackBursts: KnockbackBurstFx[];
-  /** 無双疾走残像 */
-  musouGhosts: MusouGhostFx[];
+  /** 無双疾走 — 残像・衝撃波・到着演出 */
+  musouTrail: MusouTrailState;
   /** 電波狂乱稲妻 */
   jamLightning: JamLightningFx | null;
-  /** 無双疾走到着フェード */
-  musouArrival: MusouArrivalFx | null;
   shakeMs: number;
   shakeDuration: number;
   shakeMag: number;
@@ -171,14 +167,18 @@ export function createVfx(): VfxState {
     harvestFeedbacks: [],
     skillBurst: null,
     knockbackBursts: [],
-    musouGhosts: [],
+    musouTrail: createMusouTrailState(),
     jamLightning: null,
-    musouArrival: null,
     shakeMs: 0,
     shakeDuration: 0,
     shakeMag: 0,
     ambientAcc: 0,
   };
+}
+
+function ensureVfxMusouTrail(vfx: VfxState): MusouTrailState {
+  vfx.musouTrail = ensureMusouTrailState(vfx.musouTrail);
+  return vfx.musouTrail;
 }
 
 export function resetVfx(vfx: VfxState) {
@@ -191,9 +191,8 @@ export function resetVfx(vfx: VfxState) {
   vfx.harvestFeedbacks = [];
   vfx.skillBurst = null;
   vfx.knockbackBursts = [];
-  vfx.musouGhosts = [];
+  resetMusouTrailState(ensureVfxMusouTrail(vfx));
   vfx.jamLightning = null;
-  vfx.musouArrival = null;
   vfx.shakeMs = 0;
   vfx.shakeDuration = 0;
   vfx.shakeMag = 0;
@@ -249,13 +248,27 @@ export function triggerSkillActivate(
   });
 }
 
-export function triggerMusouGhost(vfx: VfxState, gx: number, gy: number) {
-  vfx.musouGhosts.push({ x: gx, y: gy, life: 320, maxLife: 320 });
-  if (vfx.musouGhosts.length > 12) vfx.musouGhosts.shift();
+export function clearMusouTrail(vfx: VfxState) {
+  clearMusouTrailHistory(ensureVfxMusouTrail(vfx));
+}
+
+export function triggerMusouHitShockwave(vfx: VfxState, gx: number, gy: number) {
+  triggerMusouHitRing(ensureVfxMusouTrail(vfx), gx, gy);
+  triggerCollisionShake(vfx, true);
 }
 
 export function triggerMusouArrival(vfx: VfxState, gx: number, gy: number) {
-  vfx.musouArrival = { gx, gy, timer: 600, maxTimer: 600 };
+  triggerMusouArrivalShockwave(ensureVfxMusouTrail(vfx), gx, gy);
+  triggerCollisionShake(vfx, true);
+}
+
+export function tickMusouVisuals(
+  vfx: VfxState,
+  dtMs: number,
+  capturing: boolean,
+  snapshot: { gx: number; gy: number } | null,
+) {
+  vfx.musouTrail = tickMusouTrail(vfx.musouTrail, dtMs, capturing, snapshot);
 }
 
 export function triggerJamLightning(vfx: VfxState, gx: number, gy: number, radius: number) {
@@ -697,18 +710,9 @@ export function updateVfx(
     .map((b) => ({ ...b, timer: b.timer - dtMs }))
     .filter((b) => b.timer > 0);
 
-  vfx.musouGhosts = vfx.musouGhosts
-    .map((g) => ({ ...g, life: g.life - dtMs }))
-    .filter((g) => g.life > 0);
-
   if (vfx.jamLightning) {
     vfx.jamLightning.timer -= dtMs;
     if (vfx.jamLightning.timer <= 0) vfx.jamLightning = null;
-  }
-
-  if (vfx.musouArrival) {
-    vfx.musouArrival.timer -= dtMs;
-    if (vfx.musouArrival.timer <= 0) vfx.musouArrival = null;
   }
 
   vfx.pickFlashes = vfx.pickFlashes
@@ -823,13 +827,7 @@ export function drawVfx(ctx: CanvasRenderingContext2D, vfx: VfxState, cull?: imp
   }
   ctx.globalAlpha = 1;
 
-  for (const ghost of vfx.musouGhosts) {
-    const ox = ghost.x * TILE;
-    const oy = ghost.y * TILE;
-    const a = (ghost.life / ghost.maxLife) * 0.45;
-    ctx.fillStyle = `rgba(59, 212, 255, ${a})`;
-    ctx.fillRect(ox + 8, oy + 6, TILE - 16, TILE - 12);
-  }
+  drawMusouHitRings(ctx, ensureMusouTrailState(vfx.musouTrail));
 
   if (vfx.jamLightning) {
     const j = vfx.jamLightning;
@@ -851,17 +849,9 @@ export function drawVfx(ctx: CanvasRenderingContext2D, vfx: VfxState, cull?: imp
     }
   }
 
-  if (vfx.musouArrival) {
-    const m = vfx.musouArrival;
-    const t = 1 - m.timer / m.maxTimer;
-    const cx = m.gx * TILE + TILE / 2;
-    const cy = m.gy * TILE + TILE / 2;
-    const r = TILE * (1.2 + t * 1.8);
-    ctx.strokeStyle = `rgba(59, 212, 255, ${(1 - t) * 0.7})`;
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.arc(cx, cy, r, 0, Math.PI * 2);
-    ctx.stroke();
+  const arrival = vfx.musouTrail?.arrival;
+  if (arrival) {
+    drawMusouArrivalBurst(ctx, arrival);
   }
 
   for (const burst of vfx.knockbackBursts) {

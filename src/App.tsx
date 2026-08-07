@@ -45,11 +45,13 @@ import {
   getPlayerMoveCooldown,
   isSkillReady,
   isMusouActive,
+  isMusouRunning,
   isPushThroughActive,
   SkillType,
 } from './game/skills';
 import type { TutorialCallback, TutorialPhase } from './game/tutorial/types';
 import { lerp } from './game/anim';
+import { drawMusouAfterimages, drawMusouDashAura } from './game/musouVisual';
 import {
   createVfx,
   drawVfx,
@@ -70,8 +72,10 @@ import {
   triggerWinBurst,
   triggerCountdownPulse,
   triggerRaceGoBurst,
-  triggerMusouGhost,
   triggerMusouArrival,
+  triggerMusouHitShockwave,
+  clearMusouTrail,
+  tickMusouVisuals,
   triggerJamLightning,
   drawHadouAura,
   countdownBurstOrigin,
@@ -301,7 +305,7 @@ export default function App() {
     syncRivalVisuals(rivalVisualRefs, g);
     snapCameraTo(cameraRef, viewportRef, g.player.x, g.player.y);
     moveCdRef.current = 0;
-    resetVfx(vfxRef.current);
+    vfxRef.current = createVfx();
     goalFxDoneRef.current = false;
     setGame(g);
     startRaceCountdown();
@@ -423,13 +427,19 @@ export default function App() {
           if (ev.randomLaunch || ev.isAirborne) {
             sfx.knockbackLaunch(ev.seed);
             triggerKnockbackFx(vfx, ev.x, ev.y, ev.dirX, ev.dirY, ev.seed);
+            if (isMusouRunning(res.state)) {
+              triggerMusouHitShockwave(vfx, ev.x, ev.y);
+            }
           } else {
             sfx.knockbackLight(ev.seed);
           }
-        } else if (ev.type === 'musouStep') {
-          triggerMusouGhost(vfx, ev.x, ev.y);
         } else if (ev.type === 'musouComplete') {
-          triggerMusouArrival(vfx, res.state.player.x, res.state.player.y);
+          clearMusouTrail(vfx);
+          playerVisualRef.current = {
+            x: res.state.player.x,
+            y: res.state.player.y,
+          };
+          triggerMusouArrival(vfx, ev.x, ev.y);
         } else if (ev.type === 'jamSignal') {
           triggerJamLightning(vfx, ev.x, ev.y, ev.radius);
         } else if (ev.type === 'trapTriggered' && ev.kind === 'bananaPeel') {
@@ -438,6 +448,13 @@ export default function App() {
           triggerKnockbackWallFx(vfx, ev.x, ev.y);
         } else if (ev.type === 'skillUsed') {
           playSkillSfx(ev.skill);
+          if (ev.skill === SkillType.SuperSpeed) {
+            clearMusouTrail(vfx);
+            playerVisualRef.current = {
+              x: res.state.player.x,
+              y: res.state.player.y,
+            };
+          }
           triggerSkillActivate(
             vfxRef.current,
             ev.skill,
@@ -510,6 +527,19 @@ export default function App() {
       },
     );
 
+    const pHarvestForTrail = getHarvestCharacterFx(vfx, 'player');
+    tickMusouVisuals(
+      vfx,
+      dtMs,
+      isMusouRunning(g),
+      isMusouRunning(g)
+        ? {
+            gx: g.player.x,
+            gy: g.player.y + pHarvestForTrail.yOffsetPx / TILE,
+          }
+        : null,
+    );
+
     // Render
     const canvas = canvasRef.current;
     if (canvas) {
@@ -538,6 +568,7 @@ export default function App() {
             rivalVisualRefs.current,
             blinkRef.current,
             vfxRef.current,
+            gridDecorOffset(),
           );
           if (isPushThroughActive(gameRef.current.skills)) {
             drawHadouAura(
@@ -602,6 +633,7 @@ export default function App() {
     if (countdownActiveRef.current) return;
     if (g.phase !== 'playing' && g.phase !== 'tutorial') return;
     if (g.phase === 'tutorial' && g.tutorialSubStep === 0) return;
+    if (g.player.stun > 0 || g.player.knockback) return;
     if (!isSkillReady(g.skills)) return;
     unlockAudio();
     skillUseRef.current = true;
@@ -739,9 +771,20 @@ function drawSmoothEntities(
   rivalVisuals: Record<number, { x: number; y: number }>,
   blink: number,
   vfx: VfxState,
+  decor: { x: number; y: number },
 ) {
   eraseFloorCell(ctx, state, state.player.x, state.player.y, blink);
   eraseFloorCell(ctx, state, Math.round(playerVisual.x), Math.round(playerVisual.y), blink);
+
+  const pHarvest = getHarvestCharacterFx(vfx, 'player');
+  const py = playerVisual.y + pHarvest.yOffsetPx / TILE;
+
+  const pMoving =
+    Math.abs(playerVisual.x - state.player.x) > 0.04 || Math.abs(playerVisual.y - state.player.y) > 0.04;
+
+  if (isMusouRunning(state) && vfx.musouTrail) {
+    drawMusouAfterimages(ctx, vfx.musouTrail, { decorX: decor.x, decorY: decor.y });
+  }
 
   for (const rival of state.rivals) {
     const rivalVisual = rivalVisuals[rival.id] ?? { x: rival.x, y: rival.y };
@@ -775,11 +818,16 @@ function drawSmoothEntities(
     }
   }
 
-  const pHarvest = getHarvestCharacterFx(vfx, 'player');
-  const py = playerVisual.y + pHarvest.yOffsetPx / TILE;
-
-  const pMoving =
-    Math.abs(playerVisual.x - state.player.x) > 0.04 || Math.abs(playerVisual.y - state.player.y) > 0.04;
+  if (isMusouRunning(state)) {
+    drawMusouDashAura(
+      ctx,
+      playerVisual.x,
+      py,
+      state.player.facing,
+      blink,
+      state.player.lastMoveDir,
+    );
+  }
 
   drawCharacterAt(ctx, playerVisual.x, py, state.player.facing, blink, state.player.stun > 0, 'player', {
     moving: pMoving,

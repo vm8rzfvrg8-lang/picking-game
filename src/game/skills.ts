@@ -28,7 +28,7 @@ export const SKILL_DEFINITIONS: Record<SkillType, SkillDefinition> = {
     type: SkillType.SuperSpeed,
     label: '無双疾走',
     shortLabel: '疾走',
-    description: '次の棚まで自動疾走（2倍速・無敵）',
+    description: '次の棚まで自動疾走（3倍速・無敵）',
     durationMs: 0,
   },
   [SkillType.PushThrough]: {
@@ -54,7 +54,7 @@ export interface SkillState {
 }
 
 export const SKILL_GAUGE_FILL_MS = 10000;
-export const SKILL_MUSOU_SPEED_MULT = 2;
+export const SKILL_MUSOU_SPEED_MULT = 3;
 export const SKILL_HADOU_SPEED_MULT = 1.3;
 export const SKILL_JAM_GUIDE_HIDDEN_MS = 5000;
 /** 電波狂乱中、1歩ごとに停止する確率。 */

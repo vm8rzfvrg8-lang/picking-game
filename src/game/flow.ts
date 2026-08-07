@@ -431,6 +431,28 @@ export function applyRepulsionKnockback(
   return { x: fromX, y: fromY };
 }
 
+/** Move a rival off a fixed cell without relocating the occupant (e.g. musou runner). */
+export function relocateRivalOffCell(
+  grid: Tile[][],
+  fixedX: number,
+  fixedY: number,
+  rivalX: number,
+  rivalY: number,
+): { x: number; y: number } {
+  if (rivalX !== fixedX || rivalY !== fixedY) {
+    return { x: rivalX, y: rivalY };
+  }
+
+  const freeNeighbors: { x: number; y: number }[] = [];
+  for (const dir of ['up', 'down', 'left', 'right'] as Direction[]) {
+    const nx = fixedX + DELTA[dir].dx;
+    const ny = fixedY + DELTA[dir].dy;
+    if (isWalkable(grid, nx, ny)) freeNeighbors.push({ x: nx, y: ny });
+  }
+  if (freeNeighbors.length === 0) return { x: rivalX, y: rivalY };
+  return freeNeighbors[0];
+}
+
 /** If two entities share a cell, push the wrong-way one (or rival) to a free neighbor. */
 export function separateIfOverlapping(
   grid: Tile[][],
