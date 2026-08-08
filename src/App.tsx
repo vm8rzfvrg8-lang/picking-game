@@ -90,7 +90,7 @@ function snapCameraTo(
   gridY: number,
 ) {
   const { width, height } = viewportRef.current;
-  cameraRef.current = computeCameraTransform(gridX, width, height);
+  cameraRef.current = computeCameraTransform(gridX, gridY, width, height);
 }
 
 function syncRivalVisuals(
@@ -106,7 +106,8 @@ function syncRivalVisuals(
 
 export default function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const viewportRef = useCanvasResize(canvasRef);
+  const canvasWrapRef = useRef<HTMLDivElement>(null);
+  const viewportRef = useCanvasResize(canvasRef, canvasWrapRef);
   const kbRef = useKeyboardInput();
 
   const [game, setGame] = useState<GameState>(() => {
@@ -342,10 +343,10 @@ export default function App() {
     pv.x = lerp(pv.x, playerTarget.x, Math.min(1, playerLerp * dt));
     pv.y = lerp(pv.y, playerTarget.y, Math.min(1, playerLerp * dt));
     const { width: viewW, height: viewH } = viewportRef.current;
-    const targetCam = computeCameraTransform(pv.x, viewW, viewH);
+    const targetCam = computeCameraTransform(pv.x, pv.y, viewW, viewH);
     const cam = cameraRef.current;
     cam.cameraX = lerp(cam.cameraX, targetCam.cameraX, Math.min(1, 14 * dt));
-    cam.cameraY = 0;
+    cam.cameraY = lerp(cam.cameraY, targetCam.cameraY, Math.min(1, 14 * dt));
     cam.scale = targetCam.scale;
     cam.viewWorldW = targetCam.viewWorldW;
     cam.viewWorldH = targetCam.viewWorldH;
@@ -612,6 +613,7 @@ export default function App() {
         const { width: viewW, height: viewH, dpr } = viewportRef.current;
         const cam = computeCameraTransform(
           gameRef.current.player.x,
+          gameRef.current.player.y,
           viewW,
           viewH,
         );
@@ -674,6 +676,7 @@ export default function App() {
   }, []);
 
   const isGameplay = game.phase === 'playing' || game.phase === 'tutorial';
+  const showProgressHud = game.phase === 'playing';
   const showSkillControls =
     game.phase === 'playing' || (game.phase === 'tutorial' && game.tutorialSubStep > 0);
   const showDpad = isGameplay;
@@ -687,7 +690,15 @@ export default function App() {
         <div className="absolute -bottom-32 -right-32 h-96 w-96 rounded-full bg-[#ff8c42]/10 blur-3xl" />
       </div>
 
-      <div className="game-shell">
+      <div className={`game-shell${showProgressHud ? ' game-shell--playing' : ''}`}>
+        {showProgressHud && (
+          <header className="game-progress-header">
+            <div className="game-progress-zone">
+              <RaceProgressHud game={game} />
+            </div>
+          </header>
+        )}
+
         {isGameplay && (
           <GameplayTopBar
             elapsedMs={game.elapsed}
@@ -698,7 +709,7 @@ export default function App() {
           />
         )}
 
-        <div className="game-canvas-wrap">
+        <div className="game-canvas-wrap" ref={canvasWrapRef}>
           <canvas
             ref={canvasRef}
             className="game-canvas"
@@ -712,7 +723,6 @@ export default function App() {
           )}
         </div>
 
-        {game.phase === 'playing' && <RaceProgressHud game={game} />}
         {game.phase === 'playing' && (
           <CountdownOverlay label={countdownLabel} animKey={countdownAnimKey} />
         )}

@@ -36,17 +36,23 @@ function computeBackingStore(width: number, height: number): { backingW: number;
   return { backingW, backingH, dpr };
 }
 
-/** Resize canvas to fill the window; returns logical viewport size for camera math. */
-export function useCanvasResize(canvasRef: RefObject<HTMLCanvasElement | null>) {
+/** Resize canvas to fill its container; returns logical viewport size for camera math. */
+export function useCanvasResize(
+  canvasRef: RefObject<HTMLCanvasElement | null>,
+  containerRef: RefObject<HTMLElement | null>,
+) {
   const viewportRef = useRef<ViewportSize>(DEFAULT_VIEWPORT);
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    const container = containerRef.current;
+    if (!canvas || !container) return;
 
     const resize = () => {
-      const width = window.innerWidth;
-      const height = window.innerHeight;
+      const width = container.clientWidth;
+      const height = container.clientHeight;
+      if (width <= 0 || height <= 0) return;
+
       const { backingW, backingH, dpr } = computeBackingStore(width, height);
       canvas.width = backingW;
       canvas.height = backingH;
@@ -56,13 +62,14 @@ export function useCanvasResize(canvasRef: RefObject<HTMLCanvasElement | null>) 
     };
 
     resize();
-    window.addEventListener('resize', resize);
+    const ro = new ResizeObserver(resize);
+    ro.observe(container);
     window.addEventListener('orientationchange', resize);
     return () => {
-      window.removeEventListener('resize', resize);
+      ro.disconnect();
       window.removeEventListener('orientationchange', resize);
     };
-  }, [canvasRef]);
+  }, [canvasRef, containerRef]);
 
   return viewportRef;
 }

@@ -114,8 +114,8 @@ export const PICK_DURATION_MS = 2000; // 2-second pick countdown
 
 /** Decorative break-room columns drawn left of the warehouse (10 tiles = bg illustration). */
 export const LEFT_DECOR_COLS = 10;
-/** Decorative header row above the warehouse (1 tile = top banner illustration). */
-export const TOP_DECOR_ROWS = 1;
+/** Decorative header row above the warehouse (0 = progress bar is HTML overlay). */
+export const TOP_DECOR_ROWS = 0;
 export const RIVAL_STEP_MS = 580; // rival moves one cell every this many ms
 /** CPU stack detection: no progress for this long triggers sidestep. */
 export const RIVAL_STUCK_DETECT_MS = 460;

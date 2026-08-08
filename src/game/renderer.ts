@@ -223,6 +223,7 @@ export function render(ctx: CanvasRenderingContext2D, state: GameState, opts: Re
 export function drawTopDecor(ctx: CanvasRenderingContext2D, cull?: CullBounds) {
   const w = topHeaderWorldWidth();
   const h = topHeaderWorldHeight();
+  if (h <= 0) return;
   if (cull && (cull.minX >= w || cull.maxX <= 0 || cull.maxY <= 0 || cull.minY >= h)) return;
 
   ctx.save();

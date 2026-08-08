@@ -6,7 +6,7 @@ export interface CameraOffset {
 }
 
 export interface CameraState extends CameraOffset {
-  /** World-to-screen scale (map height fills viewport height). */
+  /** World-to-screen scale (zoom so ~VIEWPORT_W×VIEWPORT_H tiles fit). */
   scale: number;
   viewWorldW: number;
   viewWorldH: number;
@@ -38,22 +38,28 @@ export function gridDecorOffset(): { x: number; y: number } {
   return { x: LEFT_DECOR_COLS * TILE, y: TOP_DECOR_ROWS * TILE };
 }
 
-/** Fit map height to screen; follow player horizontally (centered with decor pad). */
+/** ~10-tile zoom; smooth-follow player center in X and Y. */
 export function computeCameraTransform(
   playerGridX: number,
+  playerGridY: number,
   viewW: number,
   viewH: number,
 ): CameraState {
   const worldH = (GRID_H + TOP_DECOR_ROWS) * TILE;
   const worldW = (GRID_W + LEFT_DECOR_COLS) * TILE;
-  const scale = viewH / worldH;
+  const scale = Math.min(
+    viewW / (VIEWPORT_W * TILE),
+    viewH / (VIEWPORT_H * TILE),
+  );
   const viewWorldW = viewW / scale;
-  const viewWorldH = worldH;
+  const viewWorldH = viewH / scale;
 
   const centerX = gridWorldX(playerGridX) + TILE / 2;
+  const centerY = gridWorldY(playerGridY) + TILE / 2;
   const cameraX = clamp(centerX - viewWorldW / 2, 0, Math.max(0, worldW - viewWorldW));
+  const cameraY = clamp(centerY - viewWorldH / 2, 0, Math.max(0, worldH - viewWorldH));
 
-  return { cameraX, cameraY: 0, scale, viewWorldW, viewWorldH };
+  return { cameraX, cameraY, scale, viewWorldW, viewWorldH };
 }
 
 /** @deprecated Use computeCameraTransform */
@@ -63,7 +69,7 @@ export function computeCameraOffset(
   viewW: number = VIEWPORT_W * TILE,
   viewH: number = VIEWPORT_H * TILE,
 ): CameraOffset {
-  const t = computeCameraTransform(playerGridX, viewW, viewH);
+  const t = computeCameraTransform(playerGridX, playerGridY, viewW, viewH);
   return { cameraX: t.cameraX, cameraY: t.cameraY };
 }
 

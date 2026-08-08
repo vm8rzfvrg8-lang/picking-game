@@ -49,6 +49,49 @@ body {
   width: 100vw;
   height: 100vh;
   background: var(--color-pixel-black);
+  /* progress HUD sizing — override via media queries on tall/narrow viewports */
+  --game-progress-core: 2.05rem;
+  --game-progress-h: calc(max(0.3rem, env(safe-area-inset-top, 0px)) + var(--game-progress-core));
+  --race-track-h: 1.35rem;
+  --race-bar-half: calc(var(--race-track-h) / 2);
+  --race-bar-h: 0.34rem;
+  --race-endcap-size: 1.1rem;
+  --race-endcap-font: 0.38rem;
+  --race-player-icon-size: 2rem;
+  --race-player-icon-inner: 1.125rem;
+  --race-player-tab-width: 5rem;
+  --race-player-tab-min-h: 1.5rem;
+  --race-player-tab-pad: 0.34rem 0.6rem 0.42rem;
+  --race-player-score-size: 9px;
+  --race-player-score-offset-y: calc(0.77rem - 1px);
+}
+
+/* Tall / portrait phones — slimmer progress band (fixed rem, no vh blow-up) */
+@media (orientation: portrait), (max-aspect-ratio: 10/16) {
+  .game-app {
+    --game-progress-core: 1.72rem;
+    --race-track-h: 1.15rem;
+    --race-bar-h: 0.3rem;
+    --race-endcap-size: 1rem;
+    --race-endcap-font: 0.35rem;
+    --race-player-icon-size: 1.875rem;
+    --race-player-icon-inner: 1.05rem;
+    --race-player-tab-width: 4.65rem;
+    --race-player-tab-min-h: 1.38rem;
+    --race-player-tab-pad: 0.3rem 0.55rem 0.38rem;
+    --race-player-score-size: 8px;
+    --race-player-score-offset-y: calc(0.73rem - 1px);
+  }
+}
+
+@media (orientation: portrait) and (max-height: 700px) {
+  .game-app {
+    --game-progress-core: 1.62rem;
+    --race-track-h: 1.08rem;
+    --race-player-icon-size: 1.8rem;
+    --race-player-icon-inner: 1rem;
+    --race-player-tab-min-h: 1.3rem;
+  }
 }
 
 .game-shell {
@@ -65,6 +108,44 @@ body {
   width: 100vw;
   height: 100vh;
   line-height: 0;
+}
+
+.game-shell--playing {
+  overflow: visible;
+}
+
+.game-shell--playing .game-canvas-wrap {
+  top: var(--game-progress-h);
+  height: auto;
+  bottom: 0;
+  z-index: 1;
+}
+
+/* Full-width black header — eliminates gray gaps at screen edges */
+.game-progress-header {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  width: 100%;
+  height: var(--game-progress-h);
+  background: #000000;
+  z-index: 50;
+  pointer-events: none;
+  overflow: visible;
+}
+
+/* 80% centered content band inside the full-width black header */
+.game-progress-zone {
+  position: relative;
+  width: 80%;
+  height: 100%;
+  margin: 0 auto;
+  background: #000000;
+  display: flex;
+  align-items: center;
+  justify-content: stretch;
+  overflow: visible;
 }
 
 .game-canvas {
@@ -404,19 +485,23 @@ body {
 /* --- Racing progress HUD (top bar) --- */
 
 .game-race-hud {
-  position: absolute;
-  top: max(0.45rem, env(safe-area-inset-top, 0px));
-  left: max(0.5rem, env(safe-area-inset-left, 0px));
-  right: max(0.5rem, env(safe-area-inset-right, 0px));
-  z-index: 110;
+  position: relative;
+  width: 100%;
+  max-width: 100%;
+  z-index: 1;
   pointer-events: none;
+  background: #000000;
 }
 
 .game-race-hud-track {
   display: flex;
   align-items: center;
   gap: 0;
-  height: 2.375rem;
+  height: var(--race-track-h);
+  width: 100%;
+  background: #000000;
+  border-radius: 0;
+  --race-bar-half: calc(var(--race-track-h) / 2);
 }
 
 .game-race-hud-endcap {
@@ -424,16 +509,14 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 1.375rem;
-  height: 1.375rem;
+  width: var(--race-endcap-size);
+  height: var(--race-endcap-size);
   border-radius: 50%;
   border: 2px solid var(--color-floor-grey);
-  background: linear-gradient(180deg, var(--color-bg-dark) 0%, var(--color-pixel-black) 100%);
-  box-shadow:
-    0 1px 3px color-mix(in srgb, var(--color-pixel-black) 45%, transparent),
-    inset 0 1px 0 color-mix(in srgb, var(--color-pixel-white) 8%, transparent);
+  background: #000000;
+  box-shadow: none;
   font-family: 'Press Start 2P', monospace;
-  font-size: 0.4375rem;
+  font-size: var(--race-endcap-font);
   font-weight: 700;
   line-height: 1;
   z-index: 2;
@@ -442,16 +525,21 @@ body {
 .game-race-hud-endcap--start {
   color: var(--color-floor-grey);
   border-color: var(--color-floor-grey);
+  background: #000000;
 }
 
 .game-race-hud-endcap--goal {
   color: var(--color-caution-yellow);
-  border-color: color-mix(in srgb, var(--color-caution-yellow) 70%, var(--color-pixel-black));
-  background: linear-gradient(180deg, color-mix(in srgb, var(--color-caution-yellow) 15%, var(--color-bg-dark)) 0%, var(--color-pixel-black) 100%);
+  border-color: color-mix(in srgb, var(--color-caution-yellow) 70%, #000000);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-caution-yellow) 12%, #000000) 0%,
+    #000000 100%
+  );
   box-shadow:
-    0 0 8px color-mix(in srgb, var(--color-caution-yellow) 25%, transparent),
-    0 1px 3px color-mix(in srgb, var(--color-pixel-black) 45%, transparent),
-    inset 0 1px 0 color-mix(in srgb, var(--color-caution-yellow) 15%, transparent);
+    0 0 6px color-mix(in srgb, var(--color-caution-yellow) 22%, transparent),
+    0 1px 2px color-mix(in srgb, #000000 55%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--color-caution-yellow) 12%, transparent);
 }
 
 .game-race-hud-bar-wrap {
@@ -459,7 +547,23 @@ body {
   flex: 1 1 auto;
   min-width: 0;
   height: 100%;
-  margin: 0 0.1875rem;
+  margin: 0;
+  background: #000000;
+}
+
+/* Back: bar + player trapezoid tab */
+.game-race-hud-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.game-race-hud-layer--back {
+  z-index: 0;
+}
+
+.game-race-hud-layer--front {
+  z-index: 1;
 }
 
 .game-race-hud-bar {
@@ -467,63 +571,150 @@ body {
   left: 0;
   right: 0;
   top: 50%;
-  height: 0.5rem;
+  height: var(--race-bar-h);
   transform: translateY(-50%);
   border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--color-floor-grey) 45%, var(--color-pixel-black));
-  background: linear-gradient(180deg, var(--color-bg-dark) 0%, var(--color-pixel-black) 100%);
-  box-shadow: inset 0 1px 3px color-mix(in srgb, var(--color-pixel-black) 45%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-floor-grey) 40%, #000000);
+  background: linear-gradient(180deg, var(--color-bg-dark) 0%, #000000 100%);
+  box-shadow: inset 0 1px 2px color-mix(in srgb, #000000 50%, transparent);
 }
 
-.game-race-hud-markers {
+/* Front stack: rivals → player score → player icon */
+.game-race-hud-marker-layer {
   position: absolute;
   inset: 0;
+  pointer-events: none;
 }
 
-.race-marker {
+.game-race-hud-marker-layer--rivals {
+  z-index: 1;
+}
+
+.game-race-hud-marker-layer--player-score {
+  z-index: 2;
+}
+
+.game-race-hud-marker-layer--player-icon {
+  z-index: 3;
+}
+
+/* Shared X anchor — origin (0,0) = progress bar axis */
+.race-marker-anchor {
   position: absolute;
   top: 50%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  transform: translate(-50%, -50%);
+  width: 0;
+  height: 0;
+  overflow: visible;
+  transform: translateX(-50%);
   transition: left 0.12s linear;
+  pointer-events: none;
+}
+
+.race-marker-group--rival {
+  /* icon center pinned to bar axis via absolute children */
+}
+
+.race-marker-group--rival .race-marker-icon-wrap {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform: translate(-50%, -50%);
+}
+
+.race-marker-group--rival .race-marker-score {
+  position: absolute;
+  left: 0;
+  top: calc(0.5rem + 0.06rem);
+  transform: translateX(-50%);
+  margin: 0;
 }
 
 .race-marker-icon-wrap {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 1.125rem;
-  height: 1.125rem;
+  width: 1rem;
+  height: 1rem;
   border-radius: 50%;
   border: 1.5px solid color-mix(in srgb, var(--color-pixel-white) 35%, transparent);
   background: color-mix(in srgb, var(--color-bg-dark) 92%, transparent);
-  box-shadow: 0 1px 3px color-mix(in srgb, var(--color-pixel-black) 40%, transparent);
+  box-shadow: 0 1px 2px color-mix(in srgb, #000000 45%, transparent);
+  flex-shrink: 0;
 }
 
 .race-marker-icon {
-  width: 0.625rem;
-  height: 0.625rem;
+  width: 0.5625rem;
+  height: 0.5625rem;
 }
 
-.race-marker--player {
-  z-index: 3;
+/* Back layer — trapezoid tab hangs below bar axis */
+.race-player-tab-anchor .race-marker-player-tab {
+  position: absolute;
+  left: 0;
+  top: var(--race-bar-half);
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--race-player-tab-width);
+  min-height: var(--race-player-tab-min-h);
+  padding: var(--race-player-tab-pad);
+  pointer-events: none;
 }
 
-.race-marker--player .race-marker-icon-wrap {
-  width: 2.25rem;
-  height: 2.25rem;
-  border: 3px solid var(--color-caution-yellow);
+.race-marker-player-tab-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* Front layer — player score centered under icon X (tab-sized, yellow glow) */
+.race-player-score-anchor .race-marker-score--player {
+  position: absolute;
+  left: 0;
+  top: var(--race-bar-half);
+  transform: translateX(-50%) translateY(var(--race-player-score-offset-y));
+  display: block;
+  width: max-content;
+  max-width: var(--race-player-tab-width);
+  margin: 0;
+  padding: 0;
+  font-size: var(--race-player-score-size);
+  font-weight: 400;
+  line-height: 1.1;
+  color: var(--color-caution-yellow);
+  font-family: 'Press Start 2P', monospace;
+  text-align: center;
+  letter-spacing: 0.02em;
+  -webkit-text-stroke: 0.35px rgba(0, 0, 0, 0.55);
+  paint-order: stroke fill;
+  text-shadow:
+    0 0 3px rgba(255, 213, 79, 0.95),
+    0 0 6px rgba(255, 179, 0, 0.75),
+    0 0 10px rgba(255, 140, 0, 0.45),
+    0 1px 2px rgba(0, 0, 0, 0.85);
+  white-space: nowrap;
+}
+
+/* Frontmost — player icon center on bar axis */
+.race-player-icon-anchor .race-marker-icon-wrap--player {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform: translate(-50%, -50%);
+  width: var(--race-player-icon-size);
+  height: var(--race-player-icon-size);
+  border: 2.5px solid var(--color-caution-yellow);
   background: linear-gradient(
     180deg,
-    color-mix(in srgb, var(--color-caution-yellow) 32%, transparent),
+    color-mix(in srgb, var(--color-caution-yellow) 28%, transparent),
     color-mix(in srgb, var(--color-bg-dark) 96%, transparent)
   );
   box-shadow:
-    0 0 12px color-mix(in srgb, var(--color-caution-yellow) 70%, transparent),
-    0 0 4px color-mix(in srgb, var(--color-safety-orange) 50%, transparent),
-    0 2px 6px color-mix(in srgb, var(--color-pixel-black) 50%, transparent);
+    0 0 10px color-mix(in srgb, var(--color-caution-yellow) 65%, transparent),
+    0 0 3px color-mix(in srgb, var(--color-safety-orange) 45%, transparent),
+    0 2px 5px color-mix(in srgb, #000000 50%, transparent);
   animation: race-player-glow 2s ease-in-out infinite;
 }
 
@@ -531,42 +722,34 @@ body {
   0%,
   100% {
     box-shadow:
-      0 0 10px rgba(255, 213, 79, 0.55),
-      0 0 3px rgba(255, 179, 0, 0.4),
-      0 2px 5px rgba(0, 0, 0, 0.45);
+      0 0 8px rgba(255, 213, 79, 0.5),
+      0 0 3px rgba(255, 179, 0, 0.35),
+      0 2px 4px rgba(0, 0, 0, 0.45);
   }
   50% {
     box-shadow:
-      0 0 16px rgba(255, 213, 79, 0.85),
-      0 0 6px rgba(255, 179, 0, 0.65),
-      0 2px 7px rgba(0, 0, 0, 0.5);
+      0 0 14px rgba(255, 213, 79, 0.8),
+      0 0 5px rgba(255, 179, 0, 0.6),
+      0 2px 6px rgba(0, 0, 0, 0.5);
   }
 }
 
 .race-marker-icon--player {
-  width: 1.25rem;
-  height: 1.25rem;
+  width: var(--race-player-icon-inner);
+  height: var(--race-player-icon-inner);
   color: var(--color-ui-blue);
 }
 
 .race-marker-score {
-  position: absolute;
-  bottom: calc(100% - 2px);
-  left: 50%;
-  transform: translateX(-50%);
-  margin-bottom: 0;
-  font-size: 8px;
+  position: relative;
+  margin-top: 0.06rem;
+  font-size: 7px;
   font-weight: 900;
-  line-height: 1;
+  line-height: 1.1;
   color: var(--color-pixel-white);
   font-family: 'Press Start 2P', monospace;
-  text-shadow: 0 1px 2px color-mix(in srgb, var(--color-pixel-black) 80%, transparent);
+  text-shadow: 0 1px 2px color-mix(in srgb, #000000 80%, transparent);
   white-space: nowrap;
-}
-
-.race-marker--player .race-marker-score {
-  color: var(--color-caution-yellow);
-  font-size: 10px;
 }
 
 /* --- Pick combo HUD (corner) --- */
@@ -722,6 +905,14 @@ body {
   display: flex;
   align-items: center;
   gap: 0.375rem;
+}
+
+.game-shell--playing .game-system-bar {
+  top: calc(var(--game-progress-h) + 0.35rem);
+}
+
+.game-shell--playing .combo-hud {
+  top: calc(var(--game-progress-h) + 0.35rem);
 }
 
 canvas {
